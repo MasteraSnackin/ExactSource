@@ -1,5 +1,7 @@
 # ExactSource
 
+[![CI](https://github.com/MasteraSnackin/ExactSource/actions/workflows/ci.yml/badge.svg)](https://github.com/MasteraSnackin/ExactSource/actions/workflows/ci.yml)
+
 ExactSource turns a written SpreadsheetBench instruction and an initial Excel
 workbook into an edited workbook with a trace of how it was produced. It is the
 Track 1 research entry for the Ylookup × Encode Rebuild Private Markets
@@ -91,9 +93,11 @@ flowchart TD
 ```
 
 ExactSource reads the answer ranges, nearby data, existing formulas and workbook
-structure. The model returns a JSON plan that must match the project's typed
-schema. Cell-level tasks can only use built-in operations. Sheet-level tasks may
-use either route.
+structure. It de-duplicates cell evidence by worksheet and coordinate and keeps
+structural headings before body evidence when a large context must be clipped.
+The model returns a JSON plan that must match the route-specific typed schema.
+Cell-level tasks can only use built-in operations. Sheet-level tasks may use
+either route.
 
 Before publishing a successful candidate, ExactSource checks that it opens and
 still contains every answer sheet named by the task. If a task ultimately fails,
@@ -247,6 +251,11 @@ These tests cover the input boundary, workbook inspection, plans, formula
 screening, restricted transforms, task isolation and submission artefacts. They
 do not replace the organiser's workbook evaluation.
 
+GitHub Actions repeats the locked lint, formatting, test and build checks on
+Python 3.11–3.13, enforces an 80% branch-coverage floor, tests the isolated
+training workspace and smoke-tests the submission image. External actions are
+pinned to complete commit SHAs and checkout credentials are not persisted.
+
 ## Demo and submission
 
 The submission demo shows a batch run rather than a graphical interface.
@@ -278,10 +287,13 @@ The public video link, team list and full benchmark result are still pending in
 - Generated Python runs with reduced privileges and resource controls inside the
   submission container. These controls limit access but do not make
   model-generated Python safe for general-purpose use.
-- Formula screening rejects visible references to external workbooks, legacy
-  integrations and external services. It does not perform semantic data-flow
-  analysis. `INDIRECT(A1)` remains valid when its formula text contains no
-  external target. The screen rejects generated `HYPERLINK` and `IMAGE` calls.
+- Formula checks reject visible references to external workbooks, legacy
+  integrations and external services, malformed structural delimiters and
+  explicit references to absent worksheets. They do not prove function
+  availability, function arity, dynamic targets or calculated results.
+  `INDIRECT(A1)` remains valid when its formula text contains no external target.
+  The checks reject generated `HYPERLINK` and `IMAGE` calls. `copy_range` rejects
+  OOXML what-if data-table formulas because it cannot relocate them safely.
 - Every contributing model call uses `Qwen/Qwen3.8-27B`. No second model acts as
   a router, judge or fallback.
 

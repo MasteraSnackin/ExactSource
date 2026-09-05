@@ -9,9 +9,10 @@ from openpyxl.workbook.defined_name import DefinedName
 from openpyxl.worksheet.formula import ArrayFormula
 from openpyxl.worksheet.table import Table, TableStyleInfo
 
-from exactsource.context import build_context
+from exactsource.context import _cell_line, _clip_section, build_context
 from exactsource.contracts import QualifiedRange, TaskSpec
-from exactsource.workbook import WorkbookInspector, inspect_workbook, read_exact_range
+from exactsource.prompts import build_messages
+from exactsource.workbook import CellSnapshot, WorkbookInspector, inspect_workbook, read_exact_range
 
 
 def _rich_workbook(path: Path) -> None:
@@ -99,12 +100,22 @@ def test_context_is_formula_aware_deterministic_and_budgeted(tmp_path: Path) -> 
     assert "TaxCell" in first.text
     assert "A5:B5" in first.text
     assert not first.truncated
+    assert first.text.startswith("## Answer-target context")
+    assert "# ExactSource task context" not in first.text
+    assert "## Instruction" not in first.text
+    assert "## Graded answer ranges" not in first.text
 
     clipped = build_context(task, char_budget=900)
     assert len(clipped.text) <= 900
     assert clipped.original_chars == first.original_chars
     assert clipped.truncated
     assert "CONTEXT TRUNCATED" in clipped.text
+
+    one_character = build_context(task, char_budget=1)
+    assert len(one_character.text) == 1
+    assert one_character.text.strip()
+    assert one_character.truncated
+    assert build_messages(task, one_character)[1]["content"]
 
 
 def test_context_reports_a_required_output_sheet_that_is_not_yet_present(tmp_path: Path) -> None:
@@ -299,8 +310,6 @@ def test_oversized_context_reserves_every_evidence_section_and_full_manifest(
     assert len(first.text) <= 12_000
     assert first.sha256 == hashlib.sha256(first.text.encode("utf-8")).hexdigest()
     for heading in (
-        "## Instruction",
-        "## Graded answer ranges",
         "## Answer-target context",
         "## Workbook structure",
         "## Declared source regions",
@@ -308,6 +317,9 @@ def test_oversized_context_reserves_every_evidence_section_and_full_manifest(
         "## Other populated workbook cells",
     ):
         assert heading in first.text
+
+    assert "## Instruction" not in first.text
+    assert "## Graded answer ranges" not in first.text
 
     manifest = first.text.split("## Workbook structure", 1)[1].split(
         "## Declared source regions", 1
@@ -486,3 +498,175 @@ def test_later_formula_sample_refills_after_target_overlap(tmp_path: Path) -> No
     normalised_catalogue_lines = {line.removeprefix("- ") for line in catalogue_formula_lines}
     assert len(normalised_catalogue_lines) == 60
     assert normalised_catalogue_lines.isdisjoint(normalised_target_lines)
+
+
+def _formula_snapshot(cached_value: object) -> CellSnapshot:
+    return CellSnapshot(
+        sheet="Data",
+        coordinate="A1",
+        row=1,
+        column=1,
+        value="=1+1",
+        formula="=1+1",
+        formula_ref=None,
+        cached_value=cached_value,
+        data_type="f",
+        number_format="General",
+        style_id=0,
+    )
+
+
+def test_formula_lines_omit_only_unavailable_cached_values() -> None:
+    assert "cached=" not in _cell_line(_formula_snapshot(None))
+    assert "cached=0" in _cell_line(_formula_snapshot(0))
+    assert "cached=false" in _cell_line(_formula_snapshot(False))
+    assert 'cached=""' in _cell_line(_formula_snapshot(""))
+
+
+def test_child_aware_clipping_water_fills_bodies_after_all_headings_and_statuses() -> None:
+    text = "## Dense ranges\n\n" + "\n\n".join(
+        (
+            f"### Range {index}\n"
+            f"- Graded cells={index * 100}\n"
+            f"- sentinel-{index}: " + chr(96 + index) * 700
+        )
+        for index in range(1, 5)
+    )
+    budget = 720
+
+    first = _clip_section(text, budget)
+    second = _clip_section(text, budget)
+
+    assert first == second
+    assert len(first) <= budget
+    assert "SECTION TRUNCATED" in first
+    for index in range(1, 5):
+        assert f"### Range {index}" in first
+        assert f"- Graded cells={index * 100}" in first
+        assert f"- sentinel-{index}:" in first
+    assert "CHILD BLOCKS OMITTED" not in first
+
+
+def test_child_aware_clipping_counts_blocks_when_all_headings_cannot_fit() -> None:
+    text = "## Many ranges\n\n" + "\n\n".join(
+        f"### Range {index} " + "x" * 70 + f"\n- sentinel-{index}" for index in range(1, 9)
+    )
+
+    first = _clip_section(text, 280)
+    second = _clip_section(text, 280)
+
+    assert first == second
+    assert len(first) <= 280
+    assert "[CHILD BLOCKS OMITTED; count=6]" in first
+    assert "### Range 1" in first
+    assert "### Range 2" in first
+    assert "### Range 3" not in first
+    assert "SECTION TRUNCATED" in first
+
+
+def test_clipped_formula_and_sparse_sections_keep_every_worksheet(tmp_path: Path) -> None:
+    path = tmp_path / "multi-sheet-evidence.xlsx"
+    workbook = openpyxl.Workbook()
+    sheet_names = ("North", "South", "East", "West")
+    for sheet_index, sheet_name in enumerate(sheet_names):
+        sheet = workbook.active if sheet_index == 0 else workbook.create_sheet()
+        sheet.title = sheet_name
+        for row in range(1, 141):
+            sheet.cell(row, 1).value = f"=ROW()+{sheet_index}"
+            sheet.cell(row, 2).value = f"{sheet_name}-value-{row}-" + "v" * 90
+    workbook.save(path)
+    task = TaskSpec(
+        id="multi-sheet-evidence",
+        instruction_type="Cell-Level Manipulation",
+        instruction="Create the result on a new worksheet.",
+        spreadsheet_path="spreadsheet/multi-sheet-evidence",
+        init_xlsx=path,
+        answer_ranges=(QualifiedRange("New Output", "A1"),),
+    )
+
+    first = build_context(task, char_budget=9_000)
+    second = build_context(task, char_budget=9_000)
+    formulas = first.text.split("## Workbook-wide formula patterns", 1)[1].split(
+        "## Other populated workbook cells", 1
+    )[0]
+    sparse = first.text.split("## Other populated workbook cells", 1)[1]
+
+    assert first == second
+    assert first.truncated
+    assert len(first.text) <= 9_000
+    for sheet_name in sheet_names:
+        marker = f'### Worksheet "{sheet_name}"'
+        assert marker in formulas
+        assert marker in sparse
+        assert f'formula="=ROW()+{sheet_names.index(sheet_name)}"' in formulas
+        assert f"{sheet_name}-value-" in sparse
+
+
+def test_task_41_47_shaped_context_keeps_every_target_and_source_block(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "task-41-47-shaped.xlsx"
+    workbook = openpyxl.Workbook()
+    cmsn = workbook.active
+    cmsn.title = "CMSN"
+    cstr = workbook.create_sheet("CSTR")
+    expro = workbook.create_sheet("EXPRO")
+    output = workbook.create_sheet("OUT CAS")
+
+    for sheet, rows in ((cmsn, 320), (cstr, 260), (expro, 8)):
+        for row in range(1, rows + 1):
+            for column in range(1, 5):
+                sheet.cell(row, column).value = (
+                    f"{sheet.title}-r{row}-c{column}-" + sheet.title.lower() * 18
+                )
+
+    for row in range(1, 321):
+        for column in range(1, 16):
+            output.cell(row, column).value = f"OUT-r{row}-c{column}-" + "o" * 70
+    workbook.save(path)
+    task = TaskSpec(
+        id="41-47-shaped",
+        instruction_type="Sheet-Level Manipulation",
+        instruction="Aggregate CMSN, CSTR and EXPRO into the four OUT CAS tables.",
+        spreadsheet_path="spreadsheet/41-47-shaped",
+        init_xlsx=path,
+        answer_ranges=(
+            QualifiedRange("OUT CAS", "A2:C1529"),
+            QualifiedRange("OUT CAS", "E2:G586"),
+            QualifiedRange("OUT CAS", "I2:K13"),
+            QualifiedRange("OUT CAS", "L2:O8"),
+        ),
+        data_position=("CMSN!A1:D1529,CSTR!A1:D592,EXPRO!A1:D8,'OUT CAS'!A1:O1529"),
+    )
+
+    first = build_context(task, char_budget=12_000)
+    second = build_context(task, char_budget=12_000)
+    targets = first.text.split("## Answer-target context", 1)[1].split("## Workbook structure", 1)[
+        0
+    ]
+    sources = _declared_source_section(first.text)
+
+    assert first == second
+    assert first.truncated
+    assert len(first.text) <= 12_000
+    assert first.sha256 == hashlib.sha256(first.text.encode("utf-8")).hexdigest()
+    expected_targets = (
+        ("### 'OUT CAS'!A2:C1529", "- Graded cells=4584"),
+        ("### 'OUT CAS'!E2:G586", "- Graded cells=1755"),
+        ("### 'OUT CAS'!I2:K13", "- Graded cells=36"),
+        ("### 'OUT CAS'!L2:O8", "- Graded cells=28"),
+    )
+    expected_sources = (
+        ("### CMSN!A1:D1529", "- Region cells=6116"),
+        ("### CSTR!A1:D592", "- Region cells=2368"),
+        ("### EXPRO!A1:D8", "- Region cells=32"),
+        ("### 'OUT CAS'!A1:O1529", "- Region cells=22935"),
+    )
+    for heading, status in expected_targets:
+        assert heading in targets
+        assert status in targets
+    for heading, status in expected_sources:
+        assert heading in sources
+        assert status in sources
+    assert "CHILD BLOCKS OMITTED" not in targets
+    assert "CHILD BLOCKS OMITTED" not in sources

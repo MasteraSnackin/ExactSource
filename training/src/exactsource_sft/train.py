@@ -496,6 +496,7 @@ def run(argv: Sequence[str] | None = None, *, environ: Mapping[str, str] | None 
                         "projected_total_tokens": plan.projected_total_tokens,
                         "maximum_pilot_tokens": MAX_PILOT_TOTAL_RENDERED_TOKENS,
                         "data_fingerprint": plan.data_fingerprint,
+                        "solve_schema_sha256": manifest["solve_schema_sha256"],
                     }
                 ),
                 end="",

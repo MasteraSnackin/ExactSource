@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+from dataclasses import dataclass
 from datetime import date, datetime, time
 from decimal import Decimal
 from typing import Any
@@ -26,24 +27,34 @@ from exactsource.workbook import CellSnapshot, WorkbookInspector
 # range parser contract.
 _UNQUALIFIED_DATA_SHEET = "__exactsource_unqualified_data_position__"
 
-# These four sections carry the workbook evidence needed to solve a task.  On
-# oversized contexts each receives up to this explicit reserve before spare
-# capacity is shared evenly.  Short sections return unused capacity to the
-# others.  The workbook manifest is kept whole whenever it independently fits
-# within the caller's budget; ordinary task metadata is normally kept whole
-# but yields fairly if a caller supplies an unusually small budget.
+# These four sampled sections carry the workbook evidence needed to solve a
+# task. On oversized contexts each receives up to this explicit reserve before
+# spare capacity is shared evenly. Short sections return unused capacity to the
+# others. The workbook manifest is kept whole whenever it independently fits
+# within the caller's budget.
 _SAMPLE_SECTION_RESERVE_CHARS = 6_000
 _MANIFEST_CONTEXT_SECTION = "Workbook structure"
-_METADATA_CONTEXT_SECTIONS = frozenset(
-    {
-        "__preamble__",
-        "Instruction",
-        "Graded answer ranges",
-    }
-)
 _SECTION_HEADER_RE = re.compile(r"(?m)^## (?P<name>[^\n]+)")
+_CHILD_HEADER_RE = re.compile(r"(?m)^### [^\n]+")
+_CHILD_STATUS_PREFIXES = (
+    "- Graded cells=",
+    "- Region cells=",
+    "- The requested worksheet does not exist",
+    "- Worksheet is absent from the input workbook.",
+    "- No additional target or neighbouring cell evidence.",
+    "- All sampled populated cells already appear in higher-priority context.",
+)
 
 CellCoordinate = tuple[str, int, int]
+
+
+@dataclass(frozen=True, slots=True)
+class _ChildBlock:
+    """A range- or worksheet-scoped evidence block inside a context section."""
+
+    heading: str
+    status: str
+    body: str
 
 
 def _json_value(value: Any) -> str:
@@ -56,7 +67,9 @@ def _json_value(value: Any) -> str:
 
 def _cell_line(cell: CellSnapshot) -> str:
     if cell.formula is not None:
-        content = f"formula={_json_value(cell.formula)}; cached={_json_value(cell.cached_value)}"
+        content = f"formula={_json_value(cell.formula)}"
+        if cell.cached_value is not None:
+            content += f"; cached={_json_value(cell.cached_value)}"
         if cell.formula_ref is not None:
             content += f"; array_ref={_json_value(cell.formula_ref)}"
     else:
@@ -366,7 +379,7 @@ def _append_formula_catalogue(
         if not formulas:
             continue
         emitted_formula = True
-        lines.append(f"- Worksheet {_json_value(sheet)}:")
+        lines.extend(("", f"### Worksheet {_json_value(sheet)}"))
         lines.extend(f"  {_cell_line(cell)[2:]}" for cell in formulas[:60])
     if not found_formula:
         lines.append("- No existing formulas were found in the sampled workbook cells.")
@@ -410,18 +423,6 @@ def _trim_section_lines(lines: list[str]) -> list[str]:
 
 
 def _render_context_sections(task: TaskSpec) -> tuple[tuple[str, str], ...]:
-    preamble = [
-        "# ExactSource task context",
-        f"Task ID: {_json_value(task.id)}",
-        f"Instruction type: {_json_value(task.instruction_type)}",
-    ]
-    instruction = ["## Instruction", task.instruction]
-    graded = ["## Graded answer ranges"]
-    graded.extend(f"- {format_qualified_range(target)}" for target in task.answer_ranges)
-    graded.append(
-        "- Only these graded ranges should determine success; preserve unrelated workbook content and formatting."
-    )
-
     target: list[str] = []
     manifest: list[str] = []
     sources: list[str] = []
@@ -436,9 +437,6 @@ def _render_context_sections(task: TaskSpec) -> tuple[tuple[str, str], ...]:
         _append_sparse_samples(sparse, inspector, seen)
 
     section_lines = (
-        ("__preamble__", preamble),
-        ("Instruction", instruction),
-        ("Graded answer ranges", graded),
         ("Answer-target context", target),
         ("Workbook structure", manifest),
         ("Declared source regions", sources),
@@ -523,10 +521,7 @@ def _section_allocations(
         remaining = budget - manifest_total
 
         base_capacities = tuple(
-            lengths[index]
-            if sections[index][0] in _METADATA_CONTEXT_SECTIONS
-            else min(lengths[index], _SAMPLE_SECTION_RESERVE_CHARS)
-            for index in flexible
+            min(lengths[index], _SAMPLE_SECTION_RESERVE_CHARS) for index in flexible
         )
         reserved = _fair_allocations(base_capacities, remaining)
         for index, allocation in zip(flexible, reserved, strict=True):
@@ -546,6 +541,151 @@ def _section_allocations(
     return _fair_allocations(lengths, budget)
 
 
+def _is_child_status(line: str) -> bool:
+    return line.startswith(_CHILD_STATUS_PREFIXES)
+
+
+def _child_blocks(text: str) -> tuple[str, tuple[_ChildBlock, ...]] | None:
+    """Split a top-level section into its prefix and ``###`` child blocks."""
+
+    matches = tuple(_CHILD_HEADER_RE.finditer(text))
+    if not matches:
+        return None
+
+    prefix = text[: matches[0].start()].rstrip("\n")
+    blocks: list[_ChildBlock] = []
+    for index, match in enumerate(matches):
+        end = matches[index + 1].start() if index + 1 < len(matches) else len(text)
+        lines = text[match.start() : end].strip("\n").splitlines()
+        heading = lines[0]
+        remainder = lines[1:]
+        while remainder and not remainder[0]:
+            remainder.pop(0)
+
+        status_lines: list[str] = []
+        while remainder and _is_child_status(remainder[0]):
+            status_lines.append(remainder.pop(0))
+        while remainder and not remainder[0]:
+            remainder.pop(0)
+
+        blocks.append(
+            _ChildBlock(
+                heading=heading,
+                status="\n".join(status_lines),
+                body="\n".join(remainder).rstrip("\n"),
+            )
+        )
+    return prefix, tuple(blocks)
+
+
+def _child_omission_line(count: int) -> str:
+    return f"[CHILD BLOCKS OMITTED; count={count}]"
+
+
+def _render_child_content(
+    prefix: str,
+    blocks: tuple[_ChildBlock, ...],
+    payloads: tuple[str, ...],
+    *,
+    omitted: int,
+) -> str:
+    parts = [prefix]
+    for block, payload in zip(blocks, payloads, strict=True):
+        rendered = block.heading
+        if payload:
+            rendered += "\n" + payload
+        parts.append(rendered)
+    if omitted:
+        parts.append(_child_omission_line(omitted))
+    return "\n\n".join(part for part in parts if part)
+
+
+def _payload_prefix(payload: str, allocation: int) -> str:
+    """Render at most ``allocation`` chars, including the heading separator."""
+
+    if not payload or allocation <= 1:
+        return ""
+    limit = allocation - 1
+    prefix = payload[:limit]
+    boundary = prefix.rfind("\n")
+    if boundary >= max(0, limit - 400):
+        prefix = prefix[:boundary]
+    return prefix
+
+
+def _status_and_body(block: _ChildBlock, allocation: int) -> str:
+    body = _payload_prefix(block.body, allocation)
+    return "\n".join(part for part in (block.status, body) if part)
+
+
+def _clip_child_section(
+    prefix: str,
+    blocks: tuple[_ChildBlock, ...],
+    available: int,
+) -> str | None:
+    """Clip child blocks without allowing early ranges to erase later ones.
+
+    Child headings are the primary structural evidence.  Once every heading
+    fits, status lines are protected when possible and the remaining capacity
+    is water-filled across child bodies.  If every heading cannot fit, a stable
+    leading subset is retained alongside an explicit omitted-block count.
+    """
+
+    empty_payloads = tuple("" for _block in blocks)
+    visible = blocks
+    omitted = 0
+    heading_only = _render_child_content(prefix, visible, empty_payloads, omitted=0)
+
+    if len(heading_only) > available:
+        selected = None
+        for count in range(len(blocks) - 1, -1, -1):
+            candidate_blocks = blocks[:count]
+            candidate = _render_child_content(
+                prefix,
+                candidate_blocks,
+                tuple("" for _block in candidate_blocks),
+                omitted=len(blocks) - count,
+            )
+            if len(candidate) <= available:
+                selected = (candidate_blocks, len(blocks) - count, candidate)
+                break
+        if selected is None:
+            return None
+        visible, omitted, heading_only = selected
+
+    status_payloads = tuple(block.status for block in visible)
+    with_status = _render_child_content(
+        prefix,
+        visible,
+        status_payloads,
+        omitted=omitted,
+    )
+    if len(with_status) <= available:
+        remaining = available - len(with_status)
+        body_capacities = tuple(1 + len(block.body) if block.body else 0 for block in visible)
+        body_allocations = _fair_allocations(body_capacities, remaining)
+        payloads = tuple(
+            _status_and_body(block, allocation)
+            for block, allocation in zip(visible, body_allocations, strict=True)
+        )
+        return _render_child_content(prefix, visible, payloads, omitted=omitted)
+
+    # All headings fit but the structural status text does not.  Fairly share
+    # what remains across each complete child payload, whose prefix begins with
+    # the status line where one exists.
+    remaining = available - len(heading_only)
+    full_payloads = tuple(
+        "\n".join(part for part in (block.status, block.body) if part) for block in visible
+    )
+    payload_capacities = tuple(1 + len(payload) if payload else 0 for payload in full_payloads)
+    allocations = _fair_allocations(payload_capacities, remaining)
+    payloads = tuple(
+        _payload_prefix(payload, allocation)
+        for payload, allocation in zip(full_payloads, allocations, strict=True)
+    )
+    return _render_child_content(prefix, visible, payloads, omitted=omitted)
+
+
 def _clip_section(text: str, char_budget: int) -> str:
     if len(text) <= char_budget:
         return text
@@ -557,6 +697,13 @@ def _clip_section(text: str, char_budget: int) -> str:
     if char_budget <= len(heading) + len(marker):
         fallback = heading + "[SECTION TRUNCATED]\n"
         return fallback[:char_budget]
+
+    child_parts = _child_blocks(text)
+    if child_parts is not None:
+        prefix, blocks = child_parts
+        clipped = _clip_child_section(prefix, blocks, char_budget - len(marker))
+        if clipped is not None:
+            return clipped + marker
 
     prefix_limit = char_budget - len(marker)
     prefix = text[:prefix_limit]
@@ -576,7 +723,7 @@ def _clip_context(
         return full_text, False
     marker = f"\n[CONTEXT TRUNCATED; original_chars={len(full_text)}]\n"
     if char_budget <= len(marker):
-        return marker[:char_budget], True
+        return marker.lstrip("\n")[:char_budget], True
 
     rendered_sections = _context_sections(full_text) if sections is None else sections
     allocations = _section_allocations(rendered_sections, char_budget - len(marker))

@@ -1,5 +1,5 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "status": "offline_preflight_only",
   "paid_training_run": false,
   "checkpoint": null,
@@ -17,8 +17,8 @@
     "python_cases": 2,
     "formula_cases_recalculated": 13,
     "source_case_sha256": "271bec812bdacec14fb9818333dde7d32ff3379d136a92e45d3d3f45dbdb1d5a",
-    "train_jsonl_sha256": "f4b76dcf8c87265965af92797c4d9a020d19386df4c32a5d8c37455c906dcd20",
-    "tune_jsonl_sha256": "be26cfa0d9eba763d900ef60a0088855468517be89a3391d109e2457501df230"
+    "train_jsonl_sha256": "3d72249666ba0fef85b585af44c8989ae5f33006bd04e80ac22e82e9b384ec66",
+    "tune_jsonl_sha256": "68a4dd9a2d759b0923d5ce0f6f46b43c596a37f2d3044b6207e7353ec8d6ccf6"
   },
   "tokenizer": {
     "repository": "Qwen/Qwen3.8-27B",
@@ -27,9 +27,9 @@
   },
   "rendered_examples": {
     "maximum_allowed_tokens": 32768,
-    "minimum_tokens": 1880,
-    "maximum_tokens": 2404,
-    "mean_tokens": 2042.12,
+    "minimum_tokens": 1779,
+    "maximum_tokens": 2385,
+    "mean_tokens": 1947.94,
     "minimum_target_tokens": 41,
     "maximum_target_tokens": 164,
     "mean_target_tokens": 72.94
@@ -45,11 +45,11 @@
     "selected_train_examples": 8,
     "tune_examples_per_pass": 4,
     "tune_passes": 2,
-    "projected_train_model_input_tokens": 16111,
-    "projected_tune_model_input_tokens_per_pass": 8373,
-    "projected_total_model_input_tokens": 32857,
+    "projected_train_model_input_tokens": 15247,
+    "projected_tune_model_input_tokens_per_pass": 8052,
+    "projected_total_model_input_tokens": 31351,
     "hard_maximum_model_input_tokens": 50000,
-    "data_fingerprint": "fbc1580d38da367e03da4095286ba85281c14815687720a58b25e14e18636c76"
+    "data_fingerprint": "a0cd8b45531af4b84b04d6fa5b13acd203c9c8dbd4e32efc96f62a343c00d925"
   },
   "dependencies": {
     "openpyxl": "3.1.5",
@@ -59,8 +59,11 @@
     "transformers": "5.5.4"
   },
   "prompt_hashes": {
-    "cell_system": "86067c6a62e4c29aafe52ea05d3507c849eb1dfd2426df8d0b9e320890818373",
-    "sheet_system": "75cfe0a111b19b32b230770f3f3a5aafdab23bba91dcc7d6b1dac0af5633e1e5",
-    "solve_schema": "e24cdc3b27a6f9400a0e643e99b8c1aa5c944f300a9884ecb791090432368155"
+    "cell_system": "0db908a991af9654b1604ddb372a8ee71e1b1cf8280f73f2579088ec56dfe48b",
+    "sheet_system": "8b8365f1355eab662b5da3a94d18a4a2b56b6c40350136f02613cc3e36975c66",
+    "solve_schemas": {
+      "cell": "b0f4e992f383872781f386cf8f055968967d820b6e6d3e8e1f0d23cdf98553fb",
+      "sheet": "7ebed946a2ded1c945774c297706080e258947b853fd676b5b1a4f44c11bb793"
+    }
   }
 }

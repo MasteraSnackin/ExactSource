@@ -106,6 +106,9 @@ def test_cli_dry_run_verifies_data_without_calling_training(
     assert output["projected_total_tokens"] == 1_600
     assert output["maximum_pilot_tokens"] == train.MAX_PILOT_TOTAL_RENDERED_TOKENS
     assert len(output["data_fingerprint"]) == 64
+    manifest = json.loads((prepared_output / "manifest.json").read_text(encoding="utf-8"))
+    assert output["solve_schema_sha256"] == manifest["solve_schema_sha256"]
+    assert set(output["solve_schema_sha256"]) == {"cell", "sheet"}
 
 
 @pytest.mark.parametrize(

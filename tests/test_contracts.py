@@ -1,4 +1,6 @@
+from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 import pytest
 from pydantic import ValidationError
@@ -12,6 +14,8 @@ from exactsource.contracts import (
     SetValue,
     SolvePlan,
     TaskSpec,
+    cell_solve_plan_json_schema,
+    sheet_solve_plan_json_schema,
     solve_plan_json_schema,
 )
 
@@ -171,3 +175,114 @@ def test_provider_schema_requires_nullable_and_defaulted_fields() -> None:
         "range",
         "formula",
     ]
+
+
+def test_cell_schema_is_a_non_empty_operations_only_subset() -> None:
+    schema = cell_solve_plan_json_schema()
+
+    assert schema["properties"]["route"] == {"const": "operations", "type": "string"}
+    assert schema["properties"]["operations"]["minItems"] == 1
+    assert schema["properties"]["operations"]["maxItems"] == MAX_PLAN_OPERATIONS
+    assert "python_code" not in schema["properties"]
+    assert schema["required"] == ["route", "summary", "operations"]
+    assert schema["additionalProperties"] is False
+
+
+def test_sheet_schema_encodes_the_same_mutually_exclusive_routes_as_solve_plan() -> None:
+    schema = sheet_solve_plan_json_schema()
+    operations_route, python_route = schema["oneOf"]
+
+    assert operations_route == {
+        "properties": {
+            "route": {"const": "operations"},
+            "operations": {"minItems": 1},
+            "python_code": {"type": "null"},
+        },
+        "required": ["route", "operations", "python_code"],
+    }
+    assert python_route == {
+        "properties": {
+            "route": {"const": "python"},
+            "operations": {"maxItems": 0},
+            "python_code": {"type": "string", "pattern": r"\S"},
+        },
+        "required": ["route", "operations", "python_code"],
+    }
+
+
+@pytest.mark.parametrize(
+    "schema_factory,payload",
+    [
+        (
+            cell_solve_plan_json_schema,
+            {
+                "route": "operations",
+                "summary": "Write the requested formula.",
+                "operations": [
+                    {
+                        "op": "set_formula",
+                        "sheet": "Sheet1",
+                        "cell": "B2",
+                        "formula": "=A2*2",
+                    }
+                ],
+            },
+        ),
+        (
+            sheet_solve_plan_json_schema,
+            {
+                "route": "operations",
+                "summary": "Write the requested formula.",
+                "operations": [
+                    {
+                        "op": "set_formula",
+                        "sheet": "Sheet1",
+                        "cell": "B2",
+                        "formula": "=A2*2",
+                    }
+                ],
+                "python_code": None,
+            },
+        ),
+        (
+            sheet_solve_plan_json_schema,
+            {
+                "route": "python",
+                "summary": "Build the requested report sheet.",
+                "operations": [],
+                "python_code": "def transform(wb):\n    wb.create_sheet('Report')",
+            },
+        ),
+    ],
+)
+def test_advertised_route_examples_are_accepted_by_production_solve_plan(
+    schema_factory: Callable[[], dict[str, Any]],
+    payload: dict[str, object],
+) -> None:
+    # Building the schema first makes each case explicitly exercise the advertised
+    # route. SolvePlan remains the sole production parsing authority.
+    schema = schema_factory()
+    assert set(schema["required"]).issubset(payload)
+    assert set(payload).issubset(schema["properties"])
+
+    if "oneOf" in schema:
+        matching_route = [
+            branch
+            for branch in schema["oneOf"]
+            if branch["properties"]["route"]["const"] == payload["route"]
+        ]
+        assert len(matching_route) == 1
+        branch = matching_route[0]
+        if payload["route"] == "operations":
+            assert len(payload["operations"]) >= branch["properties"]["operations"]["minItems"]
+            assert payload["python_code"] is None
+        else:
+            assert payload["operations"] == []
+            assert str(payload["python_code"]).strip()
+    else:
+        assert payload["route"] == schema["properties"]["route"]["const"]
+        assert len(payload["operations"]) >= schema["properties"]["operations"]["minItems"]
+
+    plan = SolvePlan.model_validate(payload)
+
+    assert plan.route == payload["route"]

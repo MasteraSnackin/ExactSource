@@ -10,7 +10,11 @@ import openpyxl
 from exactsource.context import build_context
 from exactsource.contracts import QualifiedRange, TaskSpec
 from exactsource.model import serialise_request_payload
-from exactsource.prompts import build_messages
+from exactsource.prompts import (
+    CELL_PROMPT_PLAN_SCHEMA_TEXT,
+    SHEET_PROMPT_PLAN_SCHEMA_TEXT,
+    build_messages,
+)
 
 
 def _module():
@@ -91,7 +95,7 @@ def test_exact_renderer_token_counts_are_optional_and_reported(tmp_path: Path) -
     assert len(seen_messages) == 1
     assert [message["role"] for message in seen_messages[0]] == ["system", "user"]
     assert profile.renderer_input_tokens == 123
-    assert report["schema_version"] == 2
+    assert report["schema_version"] == 3
     assert report["summary"]["renderer_input_tokens"] == {
         "min": 123,
         "mean": 123.0,
@@ -107,6 +111,39 @@ def test_exact_renderer_token_counts_are_optional_and_reported(tmp_path: Path) -
         "enabled": True,
         "renderer": "test-renderer",
     }
+
+
+def test_report_identifies_each_route_specific_solve_plan_schema(tmp_path: Path) -> None:
+    module = _module()
+    workbook_path = tmp_path / "init.xlsx"
+    workbook = openpyxl.Workbook()
+    workbook.active.title = "Data"
+    workbook.save(workbook_path)
+    profiles = [
+        module.profile_task(_task(workbook_path, "cell-schema")),
+        module.profile_task(_task(workbook_path, "sheet-schema", sheet_level=True)),
+    ]
+
+    report = module.build_report(
+        profiles,
+        dataset_sha256="d" * 64,
+        selection_name="synthetic",
+    )
+
+    schema_config = report["configuration"]["solve_plan_schemas"]
+    assert schema_config == {
+        "cell": {
+            "chars": len(CELL_PROMPT_PLAN_SCHEMA_TEXT),
+            "sha256": module._sha256_text(CELL_PROMPT_PLAN_SCHEMA_TEXT),
+        },
+        "sheet": {
+            "chars": len(SHEET_PROMPT_PLAN_SCHEMA_TEXT),
+            "sha256": module._sha256_text(SHEET_PROMPT_PLAN_SCHEMA_TEXT),
+        },
+    }
+    assert schema_config["cell"] != schema_config["sheet"]
+    assert "solve_plan_schema_chars" not in report["configuration"]
+    assert "solve_plan_schema_sha256" not in report["configuration"]
 
 
 def test_report_rejects_partially_populated_renderer_counts(tmp_path: Path) -> None:

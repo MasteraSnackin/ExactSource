@@ -39,8 +39,9 @@ Show the method section in `README.md`, then briefly open
 
 Explain only the decisions visible in the code:
 
-- formula-aware, target-first context with worksheet-qualified de-duplication;
-- one fixed `Qwen/Qwen3.8-27B` model call contract;
+- formula-aware, target-first context with worksheet-qualified de-duplication and
+  child-aware clipping;
+- one fixed `Qwen/Qwen3.8-27B` model contract with route-specific schemas;
 - a strict typed plan rather than unvalidated prose;
 - declarative formula operations for focused work and a bounded transform for
   broad sheet work;
@@ -82,10 +83,10 @@ Show `experiments/README.md` and
 Use the measured statements exactly:
 
 - the frozen development profile contains 320 tasks and reads no golden workbook;
-- mean model-visible content fell from 21,751.69 to 16,350.86 characters;
-- p95 model-visible content fell from 49,056 to 36,916 characters;
-- context truncation fell from 6 tasks to 4;
-- the final pinned-renderer input is 5,931.93 tokens on average and 14,651 at p95.
+- mean model-visible content fell from 21,751.69 to 15,537.98 characters;
+- p95 model-visible content fell from 49,056 to 35,957 characters;
+- context truncation fell from 6 tasks to 3;
+- the final pinned-renderer input is 5,735.11 tokens on average and 14,357 at p95.
 
 These are prompt-size measurements. Do not claim that they prove an accuracy or
 runtime improvement.
@@ -95,8 +96,8 @@ runtime improvement.
 Run:
 
 ```sh
-uv run pytest tests -q
-uv run python tools/check_submission.py \
+uv run --frozen pytest tests -q
+uv run --frozen python tools/check_submission.py \
   --dataset-dir /absolute/path/to/dataset \
   --submission-dir /absolute/path/to/out
 ```

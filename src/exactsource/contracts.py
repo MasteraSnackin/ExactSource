@@ -125,8 +125,8 @@ class SolvePlan(StrictModel):
         return self
 
 
-def solve_plan_json_schema() -> dict[str, Any]:
-    """Return a provider-strict schema with every object property required.
+def _provider_strict_solve_plan_json_schema() -> dict[str, Any]:
+    """Return the shared provider-strict shape for a solve plan.
 
     Several structured-output backends accept optional values only when the key is
     required and its type includes ``null``. Pydantic defaults are useful to local
@@ -149,6 +149,64 @@ def solve_plan_json_schema() -> dict[str, Any]:
 
     visit(schema)
     return schema
+
+
+def cell_solve_plan_json_schema() -> dict[str, Any]:
+    """Return the operations-only schema advertised to cell-level tasks.
+
+    ``python_code`` is omitted entirely rather than exposed as an unusable nullable
+    field. The production parser remains :class:`SolvePlan`; this schema deliberately
+    describes a strict subset of plans that parser accepts.
+    """
+
+    schema = _provider_strict_solve_plan_json_schema()
+    properties = schema["properties"]
+    properties["route"] = {"const": "operations", "type": "string"}
+    properties["operations"]["minItems"] = 1
+    properties.pop("python_code")
+    schema["required"] = ["route", "summary", "operations"]
+    return schema
+
+
+def sheet_solve_plan_json_schema() -> dict[str, Any]:
+    """Return the mutually exclusive operations-or-Python schema for sheet tasks.
+
+    The top-level properties retain their complete types and resource bounds. The
+    two ``oneOf`` branches then encode the same route invariants enforced by
+    :class:`SolvePlan`: a non-empty operation list with null Python, or an empty
+    operation list with non-blank Python source.
+    """
+
+    schema = _provider_strict_solve_plan_json_schema()
+    schema["oneOf"] = [
+        {
+            "properties": {
+                "route": {"const": "operations"},
+                "operations": {"minItems": 1},
+                "python_code": {"type": "null"},
+            },
+            "required": ["route", "operations", "python_code"],
+        },
+        {
+            "properties": {
+                "route": {"const": "python"},
+                "operations": {"maxItems": 0},
+                "python_code": {"type": "string", "pattern": r"\S"},
+            },
+            "required": ["route", "operations", "python_code"],
+        },
+    ]
+    return schema
+
+
+def solve_plan_json_schema() -> dict[str, Any]:
+    """Return the full provider-strict schema accepted for sheet-level tasks.
+
+    This compatibility entry point now includes the route invariants instead of
+    advertising combinations that the production :class:`SolvePlan` rejects.
+    """
+
+    return sheet_solve_plan_json_schema()
 
 
 @dataclass(frozen=True, slots=True)

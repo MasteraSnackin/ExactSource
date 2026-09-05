@@ -3,7 +3,7 @@ from pathlib import Path
 import pytest
 from openpyxl import Workbook, load_workbook
 from openpyxl.styles import PatternFill
-from openpyxl.worksheet.formula import ArrayFormula
+from openpyxl.worksheet.formula import ArrayFormula, DataTableFormula
 
 from exactsource.contracts import (
     MAX_PLAN_OPERATIONS,
@@ -236,6 +236,55 @@ def test_formula_operation_rejects_external_capability_without_leaking_uri(
     assert not destination.exists()
 
 
+@pytest.mark.parametrize(
+    ("formula", "category"),
+    [
+        ("=SUM(Data!A2:A4", "unbalanced formula delimiter"),
+        ("=Missing!A1", "missing worksheet reference"),
+        ("='Missing Sheet'!A1", "missing worksheet reference"),
+    ],
+)
+def test_formula_operation_rejects_confident_integrity_errors_without_leaking_names(
+    tmp_path: Path,
+    formula: str,
+    category: str,
+) -> None:
+    source = tmp_path / "source.xlsx"
+    destination = tmp_path / "result.xlsx"
+    _source_workbook(source)
+    plan = SolvePlan(
+        route="operations",
+        summary="Attempt a statically invalid formula.",
+        operations=[SetFormula(op="set_formula", sheet="Output", cell="B2", formula=formula)],
+    )
+
+    with pytest.raises(PlanApplicationError) as caught:
+        apply_operations(plan, _task(source), source, destination)
+
+    assert category in str(caught.value)
+    assert "Missing" not in str(caught.value)
+    assert not destination.exists()
+
+
+def test_formula_operation_preserves_modern_spill_syntax(tmp_path: Path) -> None:
+    source = tmp_path / "source.xlsx"
+    destination = tmp_path / "spill.xlsx"
+    _source_workbook(source)
+    plan = SolvePlan(
+        route="operations",
+        summary="Reference an existing spill range.",
+        operations=[SetFormula(op="set_formula", sheet="Output", cell="B2", formula="=Data!A2#")],
+    )
+
+    apply_operations(plan, _task(source), source, destination)
+
+    workbook = load_workbook(destination, data_only=False)
+    try:
+        assert workbook["Output"]["B2"].value == "=Data!A2#"
+    finally:
+        workbook.close()
+
+
 def test_copy_range_rejects_new_copy_of_preexisting_external_formula(
     tmp_path: Path,
 ) -> None:
@@ -265,6 +314,131 @@ def test_copy_range_rejects_new_copy_of_preexisting_external_formula(
 
     assert "external-capability function" in str(caught.value)
     assert "legacy.invalid" not in str(caught.value)
+    assert not destination.exists()
+
+
+def test_copy_range_rejects_data_table_formula_without_leaking_references(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "source.xlsx"
+    destination = tmp_path / "result.xlsx"
+    _source_workbook(source)
+    workbook = load_workbook(source, data_only=False)
+    workbook["Data"]["C2"] = DataTableFormula(
+        ref="C2",
+        r1="CONFIDENTIAL_MISSING_SHEET!A1",
+    )
+    workbook.save(source)
+    workbook.close()
+    plan = SolvePlan(
+        route="operations",
+        summary="Attempt to copy a what-if data table formula.",
+        operations=[
+            CopyRange(
+                op="copy_range",
+                source_sheet="Data",
+                source_range="C2",
+                destination_sheet="Output",
+                destination_cell="B2",
+            )
+        ],
+    )
+
+    with pytest.raises(PlanApplicationError) as caught:
+        apply_operations(plan, _task(source), source, destination)
+
+    assert "does not support data-table formulae" in str(caught.value)
+    assert "CONFIDENTIAL_MISSING_SHEET" not in str(caught.value)
+    assert not destination.exists()
+
+
+def test_copy_formula_translation_error_does_not_echo_formula(tmp_path: Path) -> None:
+    source = tmp_path / "source.xlsx"
+    destination = tmp_path / "result.xlsx"
+    _source_workbook(source)
+    workbook = load_workbook(source, data_only=False)
+    workbook["Data"]["C2"] = '=CONFIDENTIAL_FORMULA_MARKER"x"'
+    workbook.save(source)
+    workbook.close()
+    plan = SolvePlan(
+        route="operations",
+        summary="Attempt to copy a formula the translator cannot tokenise.",
+        operations=[
+            CopyRange(
+                op="copy_range",
+                source_sheet="Data",
+                source_range="C2",
+                destination_sheet="Output",
+                destination_cell="B2",
+            )
+        ],
+    )
+
+    with pytest.raises(PlanApplicationError) as caught:
+        apply_operations(plan, _task(source), source, destination)
+
+    assert "copied formula could not be translated" in str(caught.value)
+    assert "CONFIDENTIAL_FORMULA_MARKER" not in str(caught.value)
+    assert not destination.exists()
+
+
+def test_fill_formula_translation_error_does_not_echo_formula(tmp_path: Path) -> None:
+    source = tmp_path / "source.xlsx"
+    destination = tmp_path / "result.xlsx"
+    _source_workbook(source)
+    plan = SolvePlan(
+        route="operations",
+        summary="Attempt to fill a formula the translator cannot tokenise.",
+        operations=[
+            FillFormula(
+                op="fill_formula",
+                sheet="Output",
+                range="B2:B3",
+                formula='=CONFIDENTIAL_FILL_MARKER"x"',
+            )
+        ],
+    )
+
+    with pytest.raises(PlanApplicationError) as caught:
+        apply_operations(plan, _task(source), source, destination)
+
+    assert "fill formula could not be translated" in str(caught.value)
+    assert "CONFIDENTIAL_FILL_MARKER" not in str(caught.value)
+    assert not destination.exists()
+
+
+def test_copy_array_formula_translation_error_does_not_echo_formula(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "source.xlsx"
+    destination = tmp_path / "result.xlsx"
+    _source_workbook(source)
+    workbook = load_workbook(source, data_only=False)
+    workbook["Data"]["C2"] = ArrayFormula(
+        ref="C2:D3",
+        text='=CONFIDENTIAL_ARRAY_MARKER"x"',
+    )
+    workbook.save(source)
+    workbook.close()
+    plan = SolvePlan(
+        route="operations",
+        summary="Attempt to copy an array formula the translator cannot tokenise.",
+        operations=[
+            CopyRange(
+                op="copy_range",
+                source_sheet="Data",
+                source_range="C2:D3",
+                destination_sheet="Output",
+                destination_cell="A2",
+            )
+        ],
+    )
+
+    with pytest.raises(PlanApplicationError) as caught:
+        apply_operations(plan, _task(source), source, destination)
+
+    assert "copied array formula could not be translated" in str(caught.value)
+    assert "CONFIDENTIAL_ARRAY_MARKER" not in str(caught.value)
     assert not destination.exists()
 
 

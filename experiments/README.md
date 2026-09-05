@@ -47,7 +47,11 @@ payload. `prompt_profile_dev_context_dedup_v1.json` adds workbook-qualified cell
 evidence de-duplication: answer-target evidence wins over declared source regions,
 formula catalogues and general populated-cell samples, while same-coordinate cells
 on different worksheets remain distinct. Ordinary blank neighbours are omitted;
-explicit target blanks and styled blanks remain.
+explicit target blanks and styled blanks remain. It also removes task metadata that
+was duplicated inside the workbook context and allocates a tight context budget by
+structural child block, retaining range and worksheet headings before their bodies.
+The report records the distinct cell and sheet schema sizes and hashes rather than
+presenting the sheet schema as universal.
 
 `prompt_profile_dev_context_dedup_tokens_v1.json` profiles that same final prompt
 again through the exact pinned `Qwen/Qwen3.8-27B` tokenizer and
@@ -64,26 +68,27 @@ The current profiles report:
 |---|---:|---:|---:|---:|
 | Development tasks | 320 | 320 | 320 | none |
 | Cell / sheet tasks | 220 / 100 | 220 / 100 | 220 / 100 | none |
-| Truncated contexts | 6 (1.875%) | 6 (1.875%) | 4 (1.250%) | -2 tasks |
-| Median emitted context characters | 7,225 | 7,225 | 4,857 | -32.78% |
-| Model-visible content, mean characters | 21,751.69 | 19,756.19 | 16,350.86 | -24.83% |
-| Model-visible content, median characters | 17,522 | 15,507 | 12,605 | -28.06% |
-| Model-visible content, p95 characters | 49,056 | 46,618 | 36,916 | -24.75% |
-| Model-facing schema characters | 3,743 | 2,720 | 2,720 | -27.33% |
+| Truncated contexts | 6 (1.875%) | 6 (1.875%) | 3 (0.9375%) | -3 tasks |
+| Median emitted context characters | 7,225 | 7,225 | 4,066 | -43.72% |
+| Model-visible content, mean characters | 21,751.69 | 19,756.19 | 15,537.98 | -28.57% |
+| Model-visible content, median characters | 17,522 | 15,507 | 11,798 | -32.67% |
+| Model-visible content, p95 characters | 49,056 | 46,618 | 35,957 | -26.70% |
+| Model-facing cell schema characters | 3,743 | 2,720 | 2,649 | -29.23% |
+| Model-facing sheet schema characters | 3,743 | 2,720 | 3,052 | -18.46% |
 
 For the final prompt only, the exact generation-prompt input-token distribution is:
 
 | Measure | Tokens |
 |---|---:|
-| Mean | 5,931.93 |
-| Median | 4,013 |
-| p95 | 14,651 |
-| Maximum | 29,510 |
+| Mean | 5,735.11 |
+| Median | 3,785 |
+| p95 | 14,357 |
+| Maximum | 29,853 |
 
 Reproduce it against a local copy of the public dataset:
 
 ```sh
-uv run python tools/profile_prompts.py \
+uv run --frozen python tools/profile_prompts.py \
   --dataset-dir /absolute/path/to/dataset \
   --selection-file experiments/public_split_v1.json \
   --selection-field development_ids \
@@ -93,7 +98,7 @@ uv run python tools/profile_prompts.py \
 Reproduce the renderer-token report with the isolated locked training environment:
 
 ```sh
-uv run --project training python tools/profile_prompts.py \
+uv run --project training --frozen python tools/profile_prompts.py \
   --dataset-dir /absolute/path/to/dataset \
   --selection-file experiments/public_split_v1.json \
   --selection-field development_ids \
@@ -101,7 +106,7 @@ uv run --project training python tools/profile_prompts.py \
   --out experiments/prompt_profile_dev_context_dedup_tokens_v1.json
 ```
 
-Schema-version-2 prompt reports derive `request_chars` from the same pure fixed
+Schema-version-3 prompt reports derive `request_chars` from the same pure fixed
 Anthropic-payload serialiser used by the runtime; the two older schema-version-1
 reports measured their compact message-list envelope instead. The comparison table
 therefore uses model-visible message content rather than mixing those request
@@ -121,9 +126,9 @@ were executed through the production path, every cell outside the answer ranges
 was compared with the source, and the 13 formula cases matched separately stated
 values after headless LibreOffice recalculation.
 
-The exact Qwen renderer produced examples ranging from 1,880 to 2,404 tokens. The
+The exact Qwen renderer produced examples ranging from 1,779 to 2,385 tokens. The
 default four-step pilot would use 8 seeded training examples and two loss-only
-passes over the 4 tune examples, for 32,857 model-input tokens against a hard
+passes over the 4 tune examples, for 31,351 model-input tokens against a hard
 50,000-token ceiling. This is a preflight measurement, not a training result: no
 paid call, checkpoint or benchmark score exists.
 

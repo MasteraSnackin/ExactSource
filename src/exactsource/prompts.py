@@ -5,7 +5,12 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from exactsource.contracts import ContextPack, TaskSpec, solve_plan_json_schema
+from exactsource.contracts import (
+    ContextPack,
+    TaskSpec,
+    cell_solve_plan_json_schema,
+    sheet_solve_plan_json_schema,
+)
 
 _COMMON_GUIDANCE = """You are ExactSource, a careful spreadsheet transformation engine.
 
@@ -101,29 +106,47 @@ def _compact_prompt_schema(node: Any) -> Any:
     return node
 
 
-PROMPT_PLAN_SCHEMA = _compact_prompt_schema(solve_plan_json_schema())
-PROMPT_PLAN_SCHEMA_TEXT = json.dumps(
-    PROMPT_PLAN_SCHEMA,
+CELL_PROMPT_PLAN_SCHEMA = _compact_prompt_schema(cell_solve_plan_json_schema())
+SHEET_PROMPT_PLAN_SCHEMA = _compact_prompt_schema(sheet_solve_plan_json_schema())
+CELL_PROMPT_PLAN_SCHEMA_TEXT = json.dumps(
+    CELL_PROMPT_PLAN_SCHEMA,
+    ensure_ascii=False,
+    separators=(",", ":"),
+    sort_keys=True,
+)
+SHEET_PROMPT_PLAN_SCHEMA_TEXT = json.dumps(
+    SHEET_PROMPT_PLAN_SCHEMA,
     ensure_ascii=False,
     separators=(",", ":"),
     sort_keys=True,
 )
 
+# Backwards-compatible names refer to the full sheet-level schema. Cell prompts use
+# their narrower schema directly and never advertise the Python route.
+PROMPT_PLAN_SCHEMA = SHEET_PROMPT_PLAN_SCHEMA
+PROMPT_PLAN_SCHEMA_TEXT = SHEET_PROMPT_PLAN_SCHEMA_TEXT
 
-def _compose_system_prompt(route_guidance: str) -> str:
+
+def _compose_system_prompt(route_guidance: str, schema_text: str) -> str:
     sections = (
         _COMMON_GUIDANCE,
         _OPERATIONS_GUIDANCE,
         route_guidance,
         _FINAL_GUIDANCE,
-        f"SolvePlan JSON schema:\n{PROMPT_PLAN_SCHEMA_TEXT}",
+        f"SolvePlan JSON schema:\n{schema_text}",
     )
     return "\n\n".join(sections) + "\n"
 
 
-CELL_SYSTEM_PROMPT = _compose_system_prompt(_CELL_ROUTE_GUIDANCE)
+CELL_SYSTEM_PROMPT = _compose_system_prompt(
+    _CELL_ROUTE_GUIDANCE,
+    CELL_PROMPT_PLAN_SCHEMA_TEXT,
+)
 # The full sheet-level prompt remains the canonical default for documentation.
-SYSTEM_PROMPT = _compose_system_prompt(_PYTHON_GUIDANCE)
+SYSTEM_PROMPT = _compose_system_prompt(
+    _PYTHON_GUIDANCE,
+    SHEET_PROMPT_PLAN_SCHEMA_TEXT,
+)
 
 
 def system_prompt_for(task: TaskSpec) -> str:

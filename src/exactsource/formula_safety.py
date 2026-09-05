@@ -1,10 +1,12 @@
-"""Static checks for formula text that requests external capabilities.
+"""Conservative integrity and external-capability checks for generated formulae.
 
 Excel formulae are normally pure calculations over workbook data, but a small
 set of functions and link syntaxes can contact external services, load another
 workbook, or invoke legacy integration mechanisms. Generated formulae are
 screened before a workbook is saved so opening or recalculating the result does
-not unexpectedly exercise those capabilities.
+not unexpectedly exercise those capabilities. Quote-aware delimiter checks and
+confidently parsed worksheet references reject basic malformed output without
+pretending to implement Excel's complete and evolving formula grammar.
 
 The scanner deliberately ignores function-looking text inside Excel string
 literals and quoted worksheet names. Generated ``HYPERLINK`` and ``IMAGE`` calls
@@ -19,7 +21,7 @@ location all remain unchanged.
 from __future__ import annotations
 
 import re
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from typing import TypeAlias
 
 from openpyxl.worksheet.formula import ArrayFormula, DataTableFormula
@@ -67,10 +69,18 @@ _INTERNAL_HYPERLINK_RE = re.compile(
     r"|[A-Za-z_\\][A-Za-z0-9_.\\]*"
     r")$"
 )
+_EXPLICIT_SHEET_CELL_RE = re.compile(
+    r"(?<![A-Za-z0-9_.:])"
+    r"(?:'(?P<quoted>(?:[^'\r\n]|'')+)'|(?P<bare>[A-Za-z_\\][A-Za-z0-9_.]*))"
+    r"\s*!\s*\$?[A-Za-z]{1,3}\$?[1-9][0-9]*",
+    flags=re.IGNORECASE,
+)
+_OPENING_DELIMITERS = {"(": ")", "[": "]", "{": "}"}
+_CLOSING_DELIMITERS = frozenset(_OPENING_DELIMITERS.values())
 
 
 class FormulaSafetyError(ValueError):
-    """Raised when formula text contains a prohibited capability.
+    """Raised when generated formula text is unsafe or structurally invalid.
 
     Only a fixed category is included in the message. Formula text, URI text,
     sheet names and cell contents are intentionally omitted because they are
@@ -149,6 +159,108 @@ def _outside_quoted_token_mask(formula: str, string_mask: str) -> str:
             index += 1
             break
     return "".join(masked)
+
+
+def _validate_formula_delimiters(formula: str) -> None:
+    """Reject only confidently malformed quote and delimiter structure.
+
+    This is intentionally not an Excel grammar parser. It ignores delimiters in
+    double-quoted strings and single-quoted worksheet/name tokens, including
+    Excel's doubled-character escaping. Parentheses, array-constant braces and
+    structured-reference brackets must otherwise be properly nested.
+    """
+
+    stack: list[str] = []
+    index = 1
+    while index < len(formula):
+        token = formula[index]
+        if stack and stack[-1] == "]":
+            # Structured-reference contents are column/name tokens rather than
+            # ordinary formula grammar. Excel uses an apostrophe to escape a
+            # special character there, including a literal closing bracket.
+            if token == "'" and index + 1 < len(formula):
+                index += 2
+                continue
+            if token == "[":
+                stack.append("]")
+            elif token == "]":
+                stack.pop()
+            index += 1
+            continue
+        if token in {'"', "'"}:
+            delimiter = token
+            category = (
+                "unterminated formula string"
+                if delimiter == '"'
+                else "unterminated quoted identifier"
+            )
+            index += 1
+            while index < len(formula):
+                if formula[index] != delimiter:
+                    index += 1
+                    continue
+                if index + 1 < len(formula) and formula[index + 1] == delimiter:
+                    index += 2
+                    continue
+                index += 1
+                break
+            else:
+                raise FormulaSafetyError(category)
+            continue
+        if token in _OPENING_DELIMITERS:
+            stack.append(_OPENING_DELIMITERS[token])
+        elif token in _CLOSING_DELIMITERS and (not stack or stack.pop() != token):
+            raise FormulaSafetyError("unbalanced formula delimiter")
+        index += 1
+    if stack:
+        raise FormulaSafetyError("unbalanced formula delimiter")
+
+
+def _validate_explicit_sheet_references(formula: str, sheetnames: Sequence[str]) -> None:
+    """Reject confidently parsed A1 references to absent worksheets.
+
+    Formula strings are masked before matching, while quoted worksheet names are
+    decoded using Excel's doubled-apostrophe rule. Ambiguous constructs such as
+    INDIRECT, defined names, table references and 3-D ranges are deliberately not
+    treated as proof of a missing worksheet.
+    """
+
+    available = {str(name).casefold() for name in sheetnames}
+    string_mask = _outside_string_mask(formula)
+    for match in _EXPLICIT_SHEET_CELL_RE.finditer(string_mask):
+        quoted = match.group("quoted")
+        worksheet = quoted.replace("''", "'") if quoted is not None else match.group("bare")
+        if quoted is not None and worksheet is not None and ":" in worksheet:
+            # Excel quotes the two endpoints together when a 3-D reference uses
+            # worksheet names which require quoting, for example
+            # ``'Jan 2024:Dec 2024'!B2``. A colon cannot occur in an actual
+            # worksheet name, but resolving the endpoint order requires a real
+            # Excel parser. Match the deliberately conservative treatment of
+            # unquoted 3-D ranges and do not claim that this compound token is a
+            # missing single worksheet.
+            continue
+        if worksheet is not None and worksheet.casefold() not in available:
+            raise FormulaSafetyError("missing worksheet reference")
+
+
+def validate_formula_integrity(
+    formula: str,
+    *,
+    sheetnames: Sequence[str] | None = None,
+) -> None:
+    """Apply conservative safety, delimiter and explicit-reference checks.
+
+    Function names, arity, operators and calculated results remain outside this
+    static contract because Excel permits names, UDFs and evolving function sets.
+    Those require engine recalculation rather than an unsound allow-list.
+    """
+
+    validate_formula_safety(formula)
+    if not isinstance(formula, str) or not formula.startswith("="):
+        return
+    _validate_formula_delimiters(formula)
+    if sheetnames is not None:
+        _validate_explicit_sheet_references(formula, sheetnames)
 
 
 def _function_arguments(formula: str, masked: str, opening: int) -> str:
@@ -238,24 +350,27 @@ def _formula_cell(value: object) -> FormulaCell | None:
     return None
 
 
-def _validate_cell_formula_safety(value: object) -> None:
+def _validate_cell_formula_safety(value: object, sheetnames: Sequence[str]) -> None:
     if isinstance(value, ArrayFormula):
         text = value.text
         if not isinstance(text, str) or not text:
             return
-        validate_formula_safety(_formula_expression(text))
+        validate_formula_integrity(_formula_expression(text), sheetnames=sheetnames)
         if not text.startswith("="):
             # openpyxl serialises array formula text as ``text[1:]``. Check the
             # actual expression that a malformed prefix would place in XML too.
-            validate_formula_safety(f"={text[1:]}")
+            validate_formula_integrity(f"={text[1:]}", sheetnames=sheetnames)
         return
     if isinstance(value, DataTableFormula):
         for reference in (value.r1, value.r2):
             if isinstance(reference, str) and reference.strip():
-                validate_formula_safety(_formula_expression(reference))
+                validate_formula_integrity(
+                    _formula_expression(reference),
+                    sheetnames=sheetnames,
+                )
         return
     if isinstance(value, str):
-        validate_formula_safety(value)
+        validate_formula_integrity(value, sheetnames=sheetnames)
 
 
 def snapshot_formula_texts(workbook: object) -> FormulaSnapshot:
@@ -287,7 +402,9 @@ def validate_changed_formula_safety(
     """
 
     checked = 0
-    for worksheet in getattr(workbook, "worksheets", ()):
+    worksheets = tuple(getattr(workbook, "worksheets", ()))
+    sheetnames = tuple(str(worksheet.title) for worksheet in worksheets)
+    for worksheet in worksheets:
         for cell in worksheet._cells.values():
             formula_cell = _formula_cell(cell.value)
             if formula_cell is None:
@@ -295,7 +412,7 @@ def validate_changed_formula_safety(
             key = (worksheet.title, cell.coordinate)
             if before.get(key) == formula_cell:
                 continue
-            _validate_cell_formula_safety(cell.value)
+            _validate_cell_formula_safety(cell.value, sheetnames)
             checked += 1
     return checked
 
@@ -452,12 +569,16 @@ def validate_changed_formula_metadata_safety(
         "table_formulae": 0,
     }
     current = snapshot_formula_metadata(workbook)
+    sheetnames = tuple(str(name) for name in getattr(workbook, "sheetnames", ()))
     for key, formula_cell in current.items():
         if before.get(key) == formula_cell:
             continue
         if formula_cell[0].startswith("defined-name:executable:"):
             raise FormulaSafetyError("executable defined name")
-        validate_formula_safety(_formula_expression(formula_cell[1]))
+        validate_formula_integrity(
+            _formula_expression(formula_cell[1]),
+            sheetnames=sheetnames,
+        )
         category = key[0]
         if category == "conditional-formatting":
             counts["conditional_formatting"] += 1

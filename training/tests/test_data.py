@@ -8,6 +8,10 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from exactsource.prompts import (
+    CELL_PROMPT_PLAN_SCHEMA_TEXT,
+    SHEET_PROMPT_PLAN_SCHEMA_TEXT,
+)
 
 from exactsource_sft.data import (
     DEFAULT_CASE_FILE,
@@ -119,6 +123,19 @@ def test_preparation_is_deterministic_with_an_injected_renderer(
         }
 
 
+def test_manifest_hashes_each_route_specific_solve_schema(prepared_output: Path) -> None:
+    manifest = json.loads((prepared_output / "manifest.json").read_text(encoding="utf-8"))
+    expected = {
+        "cell": hashlib.sha256(CELL_PROMPT_PLAN_SCHEMA_TEXT.encode("utf-8")).hexdigest(),
+        "sheet": hashlib.sha256(SHEET_PROMPT_PLAN_SCHEMA_TEXT.encode("utf-8")).hexdigest(),
+    }
+
+    assert expected["cell"] != expected["sheet"]
+    assert manifest["schema_version"] == 2
+    assert manifest["solve_schema_sha256"] == expected
+    assert verify_prepared_dataset(prepared_output)["solve_schema_sha256"] == expected
+
+
 def test_source_verification_rejects_tampering_even_with_a_self_updated_hash(
     prepared_output: Path,
     tmp_path: Path,
@@ -159,6 +176,46 @@ def test_verification_detects_manifest_configuration_tampering(
     manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
 
     with pytest.raises(ValueError, match="field 'model' does not match"):
+        verify_prepared_dataset(tampered)
+
+
+def test_verification_rejects_legacy_manifest_schema_version(
+    prepared_output: Path,
+    tmp_path: Path,
+) -> None:
+    tampered = tmp_path / "legacy-manifest"
+    shutil.copytree(prepared_output, tampered)
+    manifest_path = tampered / "manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["schema_version"] = 1
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="unsupported SFT manifest"):
+        verify_prepared_dataset(tampered)
+
+
+@pytest.mark.parametrize(
+    "replacement",
+    [
+        "legacy-single-schema-hash",
+        {"cell": "0" * 64},
+        {"cell": "0" * 64, "sheet": "1" * 64},
+        {"cell": "0" * 64, "sheet": "1" * 64, "other": "2" * 64},
+    ],
+)
+def test_verification_rejects_incomplete_or_tampered_route_schema_hashes(
+    prepared_output: Path,
+    tmp_path: Path,
+    replacement: object,
+) -> None:
+    tampered = tmp_path / "tampered-schema"
+    shutil.copytree(prepared_output, tampered)
+    manifest_path = tampered / "manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["solve_schema_sha256"] = replacement
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="hash mismatch for solve_schema_sha256"):
         verify_prepared_dataset(tampered)
 
 

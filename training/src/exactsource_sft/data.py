@@ -22,8 +22,9 @@ from exactsource.context import build_context
 from exactsource.contracts import JsonScalar, QualifiedRange, SolvePlan, TaskSpec
 from exactsource.plans import apply_operations
 from exactsource.prompts import (
+    CELL_PROMPT_PLAN_SCHEMA_TEXT,
     CELL_SYSTEM_PROMPT,
-    PROMPT_PLAN_SCHEMA_TEXT,
+    SHEET_PROMPT_PLAN_SCHEMA_TEXT,
     SYSTEM_PROMPT,
     build_messages,
 )
@@ -45,6 +46,7 @@ OPENPYXL_VERSION = "3.1.5"
 PYDANTIC_VERSION = "2.13.5"
 SOFFICE_TIMEOUT_SECONDS = 120
 SOFFICE_ENV = "EXACTSOURCE_SOFFICE"
+SFT_MANIFEST_SCHEMA_VERSION = 2
 
 EXPECTED_DEPENDENCIES = {
     "openpyxl": OPENPYXL_VERSION,
@@ -190,6 +192,15 @@ def _sha256_file(path: Path) -> str:
         for block in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(block)
     return digest.hexdigest()
+
+
+def _solve_schema_hashes() -> dict[str, str]:
+    """Hash the exact route-specific schemas embedded in training prompts."""
+
+    return {
+        "cell": _sha256_bytes(CELL_PROMPT_PLAN_SCHEMA_TEXT.encode("utf-8")),
+        "sheet": _sha256_bytes(SHEET_PROMPT_PLAN_SCHEMA_TEXT.encode("utf-8")),
+    }
 
 
 def _reject_json_constant(value: str) -> None:
@@ -688,7 +699,7 @@ def prepare_dataset(
     atomic_write_text(tune_path, tune_text)
 
     manifest: dict[str, object] = {
-        "schema_version": 1,
+        "schema_version": SFT_MANIFEST_SCHEMA_VERSION,
         "method": (
             "hand-authored synthetic workbooks; labels executed, scope-compared "
             "and formula results independently recalculated before export"
@@ -714,7 +725,7 @@ def prepare_dataset(
             "cell": _sha256_bytes(CELL_SYSTEM_PROMPT.encode("utf-8")),
             "sheet": _sha256_bytes(SYSTEM_PROMPT.encode("utf-8")),
         },
-        "solve_schema_sha256": _sha256_bytes(PROMPT_PLAN_SCHEMA_TEXT.encode("utf-8")),
+        "solve_schema_sha256": _solve_schema_hashes(),
         "ordered_train_ids": [case.id for case in case_file.cases if case.split == "train"],
         "ordered_tune_ids": [case.id for case in case_file.cases if case.split == "tune"],
         "rendered_token_counts": token_counts,
@@ -755,7 +766,10 @@ def verify_prepared_dataset(
     except (OSError, UnicodeError) as exc:
         raise ValueError(f"cannot read SFT manifest: {exc}") from exc
     manifest = _load_json(manifest_text, label="SFT manifest")
-    if not isinstance(manifest, dict) or manifest.get("schema_version") != 1:
+    if (
+        not isinstance(manifest, dict)
+        or manifest.get("schema_version") != SFT_MANIFEST_SCHEMA_VERSION
+    ):
         raise ValueError("unsupported SFT manifest")
     expected_scalars = {
         "model": MODEL_ID,
@@ -808,7 +822,7 @@ def verify_prepared_dataset(
         "source_case_sha256": _sha256_file(resolved_case),
         "train_jsonl_sha256": _sha256_file(output_dir / "train.jsonl"),
         "tune_jsonl_sha256": _sha256_file(output_dir / "tune.jsonl"),
-        "solve_schema_sha256": _sha256_bytes(PROMPT_PLAN_SCHEMA_TEXT.encode("utf-8")),
+        "solve_schema_sha256": _solve_schema_hashes(),
     }
     for key, actual in checks.items():
         if manifest.get(key) != actual:

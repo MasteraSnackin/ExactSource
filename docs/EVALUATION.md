@@ -27,12 +27,11 @@ stratified by:
 
 - cell-level versus sheet-level task;
 - formula or transformation family;
-- logarithmic answer-size bucket;
-- presence of formulas in the initial workbook;
-- multi-sheet structure;
-- workbook truncation exposure;
-- tables and defined names;
-- macro or VBA wording.
+- logarithmic answer-size bucket.
+
+The split report also records formula presence, multi-sheet structure, workbook
+truncation exposure, tables, defined names and macro or VBA wording as balance
+diagnostics. Those Boolean features are not additional quota strata.
 
 The hold-out score is only inspected at deliberate checkpoints. The final
 submission score must still use all 400 tasks and the unmodified organiser
@@ -69,7 +68,7 @@ represented and the evaluator reports zero missing outputs.
 Before a paid prompt ablation, profile request sizes on development IDs only:
 
 ```sh
-uv run python tools/profile_prompts.py \
+uv run --frozen python tools/profile_prompts.py \
   --dataset-dir /absolute/path/to/dataset \
   --selection-file experiments/public_split_v1.json \
   --selection-field development_ids \
@@ -82,7 +81,7 @@ count with the pinned Qwen tokenizer and renderer, use the isolated training
 environment and its already-cached tokenizer revision:
 
 ```sh
-uv run --project training python tools/profile_prompts.py \
+uv run --project training --frozen python tools/profile_prompts.py \
   --dataset-dir /absolute/path/to/dataset \
   --selection-file experiments/public_split_v1.json \
   --selection-field development_ids \

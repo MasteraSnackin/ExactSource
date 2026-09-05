@@ -7,10 +7,39 @@ This is a working submission draft. Fields marked **pending** must be replaced w
 - Team name: ExactSource
 - Members, one GitHub handle per line: **pending team confirmation**
 - Repo URL: https://github.com/MasteraSnackin/ExactSource
+- Demo video: **pending**
 
 ## What we built and why
 
-ExactSource is a formula-aware spreadsheet reasoning agent for the SpreadsheetBench research task. The baseline's flat value prediction can hide existing formula patterns, lose distant workbook context and scale poorly when a sheet-level task changes thousands of cells. ExactSource therefore inspects the source workbook without reading golden files, preserves formulae in its bounded context, removes repeated cell evidence by resolved worksheet and coordinate, and routes the fixed Qwen3.8-27B model to one of two typed plans. Focused cell-level work uses auditable declarative operations, including formula writes, relative formula fills, range copies and explicit clears. Broad transformations use restricted workbook code inside the submitted container. Plan parsing, worksheet names, ranges, aggregate write volume, statically identifiable prohibited formula capabilities and output workbooks are validated before a result is promoted. Every streamed provider attempt is traced separately, including retries, while individual task failures fall back to a readable copy of the initial workbook so the remaining batch can finish. The current inference method uses one fixed prompt schema, temperature zero, bounded retries and the unmodified base model. An isolated 16-case synthetic SFT corpus has been validated offline, but it has not been sent to Tinker or used to produce the submitted model. The public 400 golden workbooks are not used for inference or training. The final official score and failure analysis are pending; this draft does not claim that structural validation alone proves spreadsheet correctness.
+ExactSource is a formula-aware spreadsheet reasoning system for the
+SpreadsheetBench research task. Flat value prediction can hide useful formula
+patterns, lose distant workbook context and scale poorly when a sheet-level task
+changes thousands of cells. ExactSource instead inspects the initial workbook
+without reading golden files and gives the fixed `Qwen/Qwen3.8-27B` model a
+bounded, formula-preserving view of the relevant evidence.
+
+Cell tasks receive an operations-only schema. Sheet tasks receive a mutually
+exclusive operations-or-Python schema. The operations route supports formula
+writes, relative fills, range copies and explicit clears inside the declared
+answer ranges; broader sheet transformations can use restricted workbook code in
+the submitted container. Context evidence is de-duplicated by worksheet and
+coordinate, and large sections retain their structural headings before body
+content is clipped.
+
+The runtime validates plan structure, worksheet names, ranges, aggregate write
+volume and newly introduced formulae before promoting a candidate workbook.
+Formula checks cover prohibited capabilities, malformed delimiters and explicit
+references to absent worksheets, but they do not claim to prove spreadsheet
+semantics or calculated results. Every streamed provider attempt is traced.
+Individual failures receive a readable initial-workbook fallback so the remaining
+batch can finish.
+
+Inference uses temperature zero, bounded retries and the unmodified base model.
+An isolated 16-case synthetic SFT corpus has been validated offline, but it has
+not been sent to Tinker or used to produce the submitted model. The public 400
+golden workbooks are not used for inference or training. The final official score
+and failure analysis are pending; this draft does not treat structural validation
+as correctness evidence.
 
 ## Models
 

@@ -20,8 +20,9 @@ from exactsource.contracts import TaskSpec
 from exactsource.dataset import load_tasks
 from exactsource.model import serialise_request_payload
 from exactsource.prompts import (
+    CELL_PROMPT_PLAN_SCHEMA_TEXT,
     CELL_SYSTEM_PROMPT,
-    PROMPT_PLAN_SCHEMA_TEXT,
+    SHEET_PROMPT_PLAN_SCHEMA_TEXT,
     SYSTEM_PROMPT,
     build_messages,
 )
@@ -150,7 +151,7 @@ def build_report(
         token_counting.update(dict(sorted(renderer_metadata.items())))
 
     return {
-        "schema_version": 2,
+        "schema_version": 3,
         "method": "initial-workbook prompt profiling; no model calls or golden access",
         "dataset_json_sha256": dataset_sha256,
         "selection": selection_name,
@@ -170,8 +171,16 @@ def build_report(
                     "sha256": _sha256_text(SYSTEM_PROMPT),
                 },
             },
-            "solve_plan_schema_chars": len(PROMPT_PLAN_SCHEMA_TEXT),
-            "solve_plan_schema_sha256": _sha256_text(PROMPT_PLAN_SCHEMA_TEXT),
+            "solve_plan_schemas": {
+                "cell": {
+                    "chars": len(CELL_PROMPT_PLAN_SCHEMA_TEXT),
+                    "sha256": _sha256_text(CELL_PROMPT_PLAN_SCHEMA_TEXT),
+                },
+                "sheet": {
+                    "chars": len(SHEET_PROMPT_PLAN_SCHEMA_TEXT),
+                    "sha256": _sha256_text(SHEET_PROMPT_PLAN_SCHEMA_TEXT),
+                },
+            },
         },
         "summary": summary,
         "largest_requests": [asdict(item) for item in largest],

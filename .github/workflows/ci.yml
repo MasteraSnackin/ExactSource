@@ -1,0 +1,167 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  quality:
+    name: Tests, lint and build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12.11"
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          version: "0.8.17"
+          enable-cache: true
+          cache-dependency-glob: |
+            uv.lock
+            pyproject.toml
+
+      - name: Reject tracked environment files
+        run: |
+          if git ls-files | grep -E '(^|/)\.env($|\.)' | grep -vE '(^|/)\.env\.example$' >/dev/null; then
+            echo "A non-example environment file is tracked." >&2
+            exit 1
+          fi
+
+      - name: Check dependency lock
+        run: uv lock --check
+
+      - name: Install locked environment
+        run: uv sync --frozen
+
+      - name: Lint and check formatting
+        run: |
+          uv run --frozen ruff check src tests tools
+          uv run --frozen ruff format --check src tests tools
+
+      - name: Run production tests with coverage floor
+        run: uv run --frozen pytest tests --cov=exactsource --cov-report=term --cov-fail-under=80
+
+      - name: Validate shell entrypoint
+        run: sh -n run.sh
+
+      - name: Build Python distributions
+        run: uv build
+
+      - name: Smoke-test the built wheel
+        run: |
+          uv venv --python 3.12.11 "${RUNNER_TEMP}/exactsource-wheel"
+          uv pip install --python "${RUNNER_TEMP}/exactsource-wheel/bin/python" dist/*.whl
+          "${RUNNER_TEMP}/exactsource-wheel/bin/exactsource" --version
+
+  compatibility:
+    name: Python ${{ matrix.python-version }} compatibility
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.13"]
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          version: "0.8.17"
+          enable-cache: true
+          cache-dependency-glob: |
+            uv.lock
+            pyproject.toml
+          cache-suffix: py-${{ matrix.python-version }}
+
+      - name: Check dependency lock
+        run: uv lock --check
+
+      - name: Install locked environment
+        run: uv sync --frozen
+
+      - name: Run production compatibility tests
+        run: uv run --frozen pytest tests
+
+  training:
+    name: Isolated training scaffold
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12.11"
+
+      - name: Set up uv without caching the large PyTorch environment
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          version: "0.8.17"
+          enable-cache: false
+
+      - name: Check training dependency lock
+        run: uv lock --project training --check
+
+      - name: Install locked training environment
+        run: uv sync --project training --frozen
+
+      - name: Lint and check training formatting
+        run: |
+          uv run --project training --frozen ruff check training/src training/tests
+          uv run --project training --frozen ruff format --check training/src training/tests
+
+      - name: Run isolated training tests
+        run: uv run --project training --frozen pytest training/tests
+
+  container:
+    name: Docker submission image
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Build image
+        run: docker build --tag exactsource:ci .
+
+      - name: Verify installed application
+        run: docker run --rm exactsource:ci --version
+
+      - name: Verify submission-only image contents
+        run: |
+          docker run --rm --entrypoint test exactsource:ci ! -e /app/.env
+          docker run --rm --entrypoint test exactsource:ci ! -e /app/tests
+          docker run --rm --entrypoint test exactsource:ci ! -e /app/training

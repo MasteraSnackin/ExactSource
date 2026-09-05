@@ -14,6 +14,7 @@ from exactsource.formula_safety import (
     validate_changed_cell_hyperlinks,
     validate_changed_formula_metadata_safety,
     validate_changed_formula_safety,
+    validate_formula_integrity,
     validate_formula_safety,
 )
 
@@ -33,6 +34,68 @@ from exactsource.formula_safety import (
 )
 def test_validate_formula_safety_allows_internal_calculations(formula: str) -> None:
     validate_formula_safety(formula)
+
+
+@pytest.mark.parametrize(
+    ("formula", "sheetnames"),
+    [
+        ("=Data!A1", ("Data",)),
+        ("=dAtA!$A$1", ("Data",)),
+        ("='Cash Flow'!A1", ("Cash Flow",)),
+        ("='O''Brien'!A1", ("O'Brien",)),
+        ("=SUM('Jan 2024:Dec 2024'!B2)", ("Jan 2024", "Dec 2024")),
+        ('="([{}]) ""quoted"""&Table1[[#Data],[Amount]]', ("Sheet",)),
+        ("=SUM(Table1['#OfItems])", ("Sheet",)),
+        ("=SUM(Table1[Column ']])", ("Sheet",)),
+        ("=INDIRECT(\"'Missing'!A1\")", ("Sheet",)),
+        ("=First:Missing!A1", ("First",)),
+        ("=A1#", ("Sheet",)),
+    ],
+)
+def test_formula_integrity_accepts_sound_static_constructs(
+    formula: str,
+    sheetnames: tuple[str, ...],
+) -> None:
+    validate_formula_integrity(formula, sheetnames=sheetnames)
+
+
+@pytest.mark.parametrize(
+    ("formula", "category"),
+    [
+        ("=SUM(A1:A2", "unbalanced formula delimiter"),
+        ("=SUM(A1:A2))", "unbalanced formula delimiter"),
+        ("={1,2", "unbalanced formula delimiter"),
+        ("=Table1[[Amount]", "unbalanced formula delimiter"),
+        ('="unterminated', "unterminated formula string"),
+        ("='unterminated!A1", "unterminated quoted identifier"),
+        ("=([A1)]", "unbalanced formula delimiter"),
+    ],
+)
+def test_formula_integrity_rejects_confidently_malformed_structure(
+    formula: str,
+    category: str,
+) -> None:
+    with pytest.raises(FormulaSafetyError) as caught:
+        validate_formula_integrity(formula, sheetnames=("Sheet",))
+
+    assert caught.value.category == category
+
+
+@pytest.mark.parametrize("formula", ["=Missing!A1", "='Missing Sheet'!$B$2"])
+def test_formula_integrity_rejects_confident_missing_sheet_reference(formula: str) -> None:
+    with pytest.raises(FormulaSafetyError) as caught:
+        validate_formula_integrity(formula, sheetnames=("Data", "Output"))
+
+    assert caught.value.category == "missing worksheet reference"
+    assert "Missing" not in str(caught.value)
+
+
+@pytest.mark.parametrize(
+    "formula",
+    ["=NO_SUCH_FUNCTION(A1)", "=#REF!", "=A1+"],
+)
+def test_formula_integrity_does_not_claim_to_validate_excel_semantics(formula: str) -> None:
+    validate_formula_integrity(formula, sheetnames=("Sheet",))
 
 
 @pytest.mark.parametrize(
@@ -90,6 +153,29 @@ def test_changed_formula_validation_grandfathers_only_unchanged_formulae() -> No
     sheet["A2"].value.text = '=WEBSERVICE("https://new.invalid")'
     with pytest.raises(FormulaSafetyError, match="external-capability function"):
         validate_changed_formula_safety(workbook, before)
+
+
+@pytest.mark.parametrize(
+    ("formula", "category"),
+    [
+        ("=SUM(A1:A2", "unbalanced formula delimiter"),
+        ("=Missing!A1", "missing worksheet reference"),
+    ],
+)
+def test_changed_formula_validation_checks_structure_and_final_sheetnames(
+    formula: str,
+    category: str,
+) -> None:
+    workbook = Workbook()
+    worksheet = workbook.active
+    worksheet.title = "Data"
+    before = snapshot_formula_texts(workbook)
+    worksheet["A1"] = formula
+
+    with pytest.raises(FormulaSafetyError) as caught:
+        validate_changed_formula_safety(workbook, before)
+
+    assert caught.value.category == category
 
 
 def test_changed_array_formula_cannot_hide_function_in_discarded_prefix() -> None:

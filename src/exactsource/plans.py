@@ -14,7 +14,7 @@ from typing import NoReturn
 from openpyxl import load_workbook
 from openpyxl.formula.translate import Translator
 from openpyxl.utils import column_index_from_string, get_column_letter
-from openpyxl.worksheet.formula import ArrayFormula
+from openpyxl.worksheet.formula import ArrayFormula, DataTableFormula
 from pydantic import ValidationError
 
 from exactsource.contracts import (
@@ -29,7 +29,7 @@ from exactsource.contracts import (
     SolvePlan,
     TaskSpec,
 )
-from exactsource.formula_safety import FormulaSafetyError, validate_formula_safety
+from exactsource.formula_safety import FormulaSafetyError, validate_formula_integrity
 from exactsource.ranges import RangeSyntaxError, range_bounds
 
 MAX_EXCEL_ROW = 1_048_576
@@ -208,7 +208,7 @@ def _canonicalise_modern_functions(value: str) -> str:
     return "".join(pieces)
 
 
-def _formula(value: str, *, field: str) -> str:
+def _formula(value: str, *, field: str, workbook: object | None = None) -> str:
     if not isinstance(value, str) or not value.startswith("=") or len(value) < 2:
         raise PlanApplicationError(f"{field} must be a non-empty Excel formula beginning with '='")
     if "\x00" in value:
@@ -221,7 +221,8 @@ def _formula(value: str, *, field: str) -> str:
             f"{field} exceeds Excel's 8,192-character formula limit after canonicalisation"
         )
     try:
-        validate_formula_safety(canonicalised)
+        sheetnames = getattr(workbook, "sheetnames", None) if workbook is not None else None
+        validate_formula_integrity(canonicalised, sheetnames=sheetnames)
     except FormulaSafetyError as exc:
         raise PlanApplicationError(f"{field} {exc}") from None
     return canonicalised
@@ -328,13 +329,15 @@ def _apply_copy(workbook: object, operation: CopyRange) -> tuple[int, set[str]]:
                         target.coordinate
                     ),
                     field="copied formula",
+                    workbook=workbook,
                 )
-            except Exception as exc:
-                if isinstance(exc, PlanApplicationError):
-                    raise
-                raise PlanApplicationError(
-                    f"could not translate formula copied from {source_coordinate}: {exc}"
-                ) from None
+            except PlanApplicationError:
+                raise
+            except Exception:
+                # openpyxl's TokenizerError embeds the complete formula, which
+                # may contain confidential workbook text. Keep this error fixed
+                # and categorical so traces never echo the formula.
+                raise PlanApplicationError("copied formula could not be translated") from None
         elif isinstance(value, ArrayFormula):
             array = array_refs.get(source_coordinate)
             if array is None:
@@ -356,14 +359,20 @@ def _apply_copy(workbook: object, operation: CopyRange) -> tuple[int, set[str]]:
             )
             try:
                 translated_text = Translator(
-                    _formula(value.text, field="array formula text"),
+                    _formula(value.text, field="array formula text", workbook=workbook),
                     origin=source_coordinate,
                 ).translate_formula(target.coordinate)
-            except Exception as exc:
-                raise PlanApplicationError(
-                    f"could not translate array formula copied from {source_coordinate}: {exc}"
-                ) from None
+            except PlanApplicationError:
+                raise
+            except Exception:
+                raise PlanApplicationError("copied array formula could not be translated") from None
             value = ArrayFormula(ref=translated_ref, text=translated_text)
+        elif isinstance(value, DataTableFormula):
+            # What-if data-table formulae carry anchor/ref metadata whose safe
+            # relocation is not implemented here. Reusing the source object can
+            # retain a stale ref and also bypass validation of r1/r2, so copying
+            # one must fail closed instead of producing a corrupted workbook.
+            raise PlanApplicationError("copy_range does not support data-table formulae")
         target.value = value
         if style is not None:
             target._style = copy.copy(style)
@@ -505,7 +514,7 @@ def _apply_one(workbook: object, operation: object) -> tuple[int, set[str], dict
     if isinstance(operation, SetFormula):
         sheet = _sheet(workbook, operation.sheet, field="sheet")
         coordinate, _, _ = _cell_coordinate(operation.cell, field="cell")
-        sheet[coordinate] = _formula(operation.formula, field="formula")
+        sheet[coordinate] = _formula(operation.formula, field="formula", workbook=workbook)
         return 1, {operation.sheet}, None
 
     if isinstance(operation, FillFormula):
@@ -514,7 +523,7 @@ def _apply_one(workbook: object, operation: object) -> tuple[int, set[str], dict
             operation.range, field="range"
         )
         origin = f"{get_column_letter(min_col)}{min_row}"
-        formula = _formula(operation.formula, field="formula")
+        formula = _formula(operation.formula, field="formula", workbook=workbook)
         for row in range(min_row, max_row + 1):
             for column in range(min_col, max_col + 1):
                 target = sheet.cell(row, column)
@@ -522,16 +531,16 @@ def _apply_one(workbook: object, operation: object) -> tuple[int, set[str], dict
                     target.value = Translator(formula, origin=origin).translate_formula(
                         target.coordinate
                     )
-                except Exception as exc:
-                    raise PlanApplicationError(
-                        f"could not translate fill formula to {target.coordinate}: {exc}"
-                    ) from None
+                except Exception:
+                    # TokenizerError includes the complete formula. Do not place
+                    # model-generated literals or workbook text in traces.
+                    raise PlanApplicationError("fill formula could not be translated") from None
         return count, {operation.sheet}, None
 
     if isinstance(operation, SetArrayFormula):
         sheet = _sheet(workbook, operation.sheet, field="sheet")
         coordinate, _, _ = _cell_coordinate(operation.cell, field="cell")
-        formula = _formula(operation.formula, field="formula")
+        formula = _formula(operation.formula, field="formula", workbook=workbook)
         sheet[coordinate] = ArrayFormula(ref=coordinate, text=formula)
         return (
             1,
@@ -549,7 +558,7 @@ def _apply_one(workbook: object, operation: object) -> tuple[int, set[str], dict
         normalised, min_row, min_col, max_row, max_col, count = _range_coordinates(
             operation.range, field="range"
         )
-        formula = _formula(operation.formula, field="formula")
+        formula = _formula(operation.formula, field="formula", workbook=workbook)
         for row in range(min_row, max_row + 1):
             for column in range(min_col, max_col + 1):
                 sheet.cell(row, column).value = None
