@@ -74,30 +74,33 @@ has not yet been run.
 
 ```mermaid
 flowchart TD
-    accTitle: ExactSource workbook processing flow
-    accDescr: A dataset task becomes workbook context, a model plan and either built-in operations or a restricted sheet transform. ExactSource writes per-task evidence, validates the full batch, records run metrics and passes predictions plus workbooks to the external evaluator.
-    Input["Task instruction and initial workbook"] --> Loader["Confined dataset loader"]
-    Loader --> Context["Workbook inspector and context builder"]
-    Context --> Model["Qwen/Qwen3.8-27B through Tinker"]
-    Model --> Plan["Validated SolvePlan"]
-    Plan --> Route{"Execution route"}
-    Route -->|"Cell task: operations"| Operations["Built-in workbook operations"]
-    Route -->|"Sheet task: operations"| Operations
-    Route -->|"Sheet task: Python"| Transform["Restricted workbook transform"]
-    Operations --> Validate["Reopen and validate workbook"]
-    Transform --> Validate
-    Validate --> TaskOutput["Per-task workbook and trace status"]
-    TaskOutput --> Batch["Write predictions and validate full batch"]
-    Batch --> Metrics["Write run_metrics.json"]
-    Batch -->|"predictions and workbooks"| Evaluator["Organiser evaluator with LibreOffice"]
+    accTitle: ExactSource processing and external scoring
+    accDescr: ExactSource reads task metadata, an instruction and an initial workbook, builds bounded text context, asks Qwen through Tinker for a typed edit plan, parses the plan and runs the selected route, checks the workbook structure and writes the output artefacts. The organiser separately recalculates and scores the output workbooks.
+
+    Input["Task metadata, instruction<br/>and initial workbook"]
+    Inspect["Build bounded<br/>workbook context"]
+    Model["Tinker: Qwen/Qwen3.8-27B<br/>proposes a typed edit plan"]
+    Execute["Parse the plan and<br/>run the selected route"]
+    Check["Reopen and check<br/>workbook structure"]
+    Output["Write output workbooks,<br/>predictions and run artefacts"]
+    Score["Organiser evaluator<br/>recalculates and scores"]
+
+    Input --> Inspect
+    Inspect --> Model
+    Model --> Execute
+    Execute --> Check
+    Check --> Output
+    Output -.->|"predictions and output workbooks"| Score
 ```
 
 ExactSource reads the answer ranges, nearby data, existing formulas and workbook
 structure. It de-duplicates cell evidence by worksheet and coordinate and keeps
 structural headings before body evidence when a large context must be clipped.
-The model returns a JSON plan that must match the route-specific typed schema.
-Cell-level tasks can only use built-in operations. Sheet-level tasks may use
-either route.
+Tinker receives a text request containing this bounded workbook context rather
+than the workbook file. The model returns a JSON plan that must match the
+route-specific typed schema. ExactSource then runs either declared operations
+or, for sheet-level tasks, screened Python against a temporary workbook copy.
+Cell-level tasks can only use built-in operations.
 
 Before publishing a successful candidate, ExactSource checks that it opens and
 still contains every answer sheet named by the task. If a task ultimately fails,

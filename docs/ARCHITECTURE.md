@@ -30,60 +30,83 @@ These requirements shape the design:
 ## System context
 
 ```mermaid
-flowchart LR
-    accTitle: ExactSource system context
-    accDescr: A judge or developer runs ExactSource against a SpreadsheetBench dataset. ExactSource calls Tinker and writes local artefacts. The organiser evaluator receives only the predictions and referenced workbooks.
-    Operator["Judge or developer"] --> Entry["run.sh or ExactSource CLI"]
-    Dataset["SpreadsheetBench dataset"] --> Entry
-    Entry --> Runtime["ExactSource task runtime"]
-    Runtime -->|"instruction and workbook context"| Tinker["Tinker inference API<br/>Qwen/Qwen3.8-27B"]
-    Tinker -->|"streamed plan response"| Runtime
-    Runtime --> Output["Workbooks, predictions,<br/>traces, metrics and log"]
-    Output -->|"predictions and workbooks only"| Evaluator["Organiser evaluator<br/>with LibreOffice"]
-    Evaluator --> Result["results.json"]
+flowchart TB
+    accTitle: ExactSource data and runtime boundaries
+    accDescr: A judge or developer runs ExactSource against an organiser dataset. The solve path reads task metadata, the instruction and the initial workbook, sends a text request containing bounded workbook context to Qwen through Tinker, and writes local artefacts. Golden workbooks stay outside the solve path and are used only during separate organiser evaluation.
+
+    Operator["Judge or developer"]
+
+    subgraph DatasetBoundary["Organiser dataset"]
+        direction TB
+        TaskInput["Task metadata, instruction<br/>and initial workbooks"]
+        Golden["Golden workbooks<br/>(evaluation only)"]
+    end
+
+    subgraph ExactSourceBoundary["ExactSource local boundary"]
+        direction LR
+        Entry["run.sh or CLI"]
+        Runtime["Inspect workbook, build prompt,<br/>parse plan and run edits"]
+        Artefacts["Output workbooks, predictions,<br/>traces, metrics and log"]
+        Entry --> Runtime
+        Runtime --> Artefacts
+    end
+
+    Tinker["Tinker API over HTTPS<br/>Qwen/Qwen3.8-27B"]
+
+    subgraph EvaluationBoundary["Separate organiser evaluation"]
+        direction TB
+        Evaluator["evaluate.py<br/>LibreOffice recalculation"]
+        Result["results.json"]
+        Evaluator --> Result
+    end
+
+    Operator --> Entry
+    TaskInput -->|"metadata, instruction and<br/>initial workbook"| Entry
+    Runtime <-->|"request: text with bounded workbook context<br/>response: streamed model text"| Tinker
+    Artefacts -.->|"predictions and output workbooks"| Evaluator
+    TaskInput -.->|"benchmark task data"| Evaluator
+    Golden -.->|"expected workbooks"| Evaluator
 ```
 
-The Docker wrapper mounts the dataset at `/data` as read-only and the result
-directory at `/out` as writable. ExactSource sends a bounded text description of
-the task and workbook to Tinker. The organiser's evaluator later recalculates and
-scores the saved workbooks.
+The groups mark the dataset, local runtime and evaluation boundaries. The Docker
+wrapper mounts the dataset at `/data` as read-only and the result directory at
+`/out` as writable. The solve path selects the task metadata, instruction,
+answer ranges and initial workbook; it does not read golden workbooks. Tinker
+receives bounded text context rather than the workbook file. The organiser's
+separate evaluator later reads the dataset, predictions and referenced output
+workbooks, then recalculates and scores them.
 
 ## Task pipeline
 
 ```mermaid
 flowchart TD
     accTitle: ExactSource task pipeline
-    accDescr: Each task uses a temporary workbook and a bounded model call. A rejected plan or workbook can receive one repair request. Exhausted failures publish the initial workbook, while successful workbooks and fallbacks enter final batch validation.
-    Task["TaskSpec"] --> Copy["Create a working copy"]
-    Copy --> Inspect["Inspect workbook and build context"]
-    Inspect --> Call["Stream a model response"]
-    Call --> Parse{"SolvePlan accepted?"}
-    Parse -->|Yes| Route{"Task and plan route"}
-    Route -->|"Cell task"| Operations["Declarative operations"]
-    Route -->|"Sheet task: operations"| Operations
-    Route -->|"Sheet task: Python"| Python["Restricted Python transform"]
-    Operations --> Candidate["Candidate workbook"]
-    Python --> Candidate
-    Candidate --> Check{"Readable and required sheets present?"}
-    Check -->|Yes| Publish["Publish workbook and task evidence"]
-    Parse -->|No| Repair{"Repair request available?"}
-    Operations -.->|"execution rejected"| Repair
-    Python -.->|"execution rejected"| Repair
+    accDescr: A task normally moves from a temporary workbook copy through context construction, a model request, typed plan validation, route execution and structural checks. A rejected plan, execution or candidate check may use one semantic repair. A provider call that fails under its retry policy, or an exhausted repair, publishes the initial workbook with an error status. Every task result then enters final batch validation.
+
+    Prepare["TaskSpec: copy initial workbook<br/>and build bounded context"]
+    Attempt["Request and parse a SolvePlan,<br/>then run the selected route"]
+    Check{"Candidate readable and<br/>required answer sheets present?"}
+    Check -->|Yes| Publish["Publish candidate workbook<br/>with ok status"]
+
+    Prepare --> Attempt
+    Attempt --> Check
+    Attempt -.->|"plan or execution rejected"| Repair{"One semantic repair<br/>available?"}
     Check -->|No| Repair
-    Repair -->|Yes| RepairPrompt["Add deterministic error to repair prompt"]
-    RepairPrompt --> Call
-    Repair -->|No| Fallback["Write initial workbook as fallback"]
-    Call -.->|"provider failure after retries"| Fallback
-    Publish --> Batch["Validate the full output contract"]
-    Fallback --> Batch
-    Batch --> Metrics["Write run_metrics.json"]
+    Repair -->|"Yes: add deterministic error"| Attempt
+    Repair -->|No| Fallback["Publish the initial workbook copy<br/>with error status"]
+    Attempt -.->|"provider call fails under its retry policy"| Fallback
+    Publish --> TaskResult["Write task trace and<br/>return task result"]
+    Fallback --> TaskResult
+    TaskResult --> Batch["After all tasks: write predictions,<br/>validate outputs and write metrics"]
 ```
 
 Cell-level tasks can only use declarative operations. A sheet-level task may use
 either route. All edits happen on a temporary working copy. The first parse,
-execution or answer-sheet validation failure can trigger one repair request. If
-the repair also fails, the runner discards the edited workbook and writes the
-initial workbook to that task's output path.
+execution or candidate check failure can trigger one semantic repair request
+with deterministic error feedback. Each model request follows its own transport
+retry policy; if the provider call still fails, the task goes straight to the
+fallback. If a task still fails, the runner discards the edited workbook and
+writes the initial workbook to that task's output path with an error status.
 
 ## Components
 
