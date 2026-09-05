@@ -1,4 +1,5 @@
 import gzip
+import hashlib
 import json
 from pathlib import Path
 
@@ -17,8 +18,10 @@ from exactsource.model import (
     ModelConfigurationError,
     ModelResponseError,
     ModelTransportError,
+    ModelTruncationError,
     TinkerClient,
     redact_secrets,
+    serialise_request_payload,
 )
 from exactsource.prompts import PROMPT_PLAN_SCHEMA, build_messages
 
@@ -314,6 +317,64 @@ def test_client_uses_fixed_reproducible_payload_and_reports_attempt() -> None:
     assert attempts[0]["thinking_chars"] == 0
 
 
+def test_client_uses_and_traces_explicit_generation_policy_overrides() -> None:
+    seen: dict[str, object] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["payload"] = json.loads(request.content)
+        return _stream_response(_success_events())
+
+    attempts: list[dict[str, object]] = []
+    http_client = httpx.Client(transport=httpx.MockTransport(handler))
+    client = TinkerClient(api_key="test-key", client=http_client)
+
+    client.complete(
+        MESSAGES,
+        max_output_tokens=32_000,
+        reasoning_effort=False,
+        on_attempt=attempts.append,
+    )
+
+    payload = seen["payload"]
+    assert isinstance(payload, dict)
+    assert payload["max_tokens"] == 32_000
+    assert payload["reasoning_effort"] is False
+    assert attempts[0]["max_output_tokens"] == 32_000
+    assert attempts[0]["reasoning_effort"] is False
+    _, _, serialised = serialise_request_payload(
+        MESSAGES,
+        max_output_tokens=32_000,
+        reasoning_effort=False,
+    )
+    assert attempts[0]["request_sha256"] == hashlib.sha256(serialised.encode()).hexdigest()
+
+
+@pytest.mark.parametrize("value", [0, -1, True, 1.5, "16000", None])
+def test_max_output_token_override_is_strictly_validated(value: object) -> None:
+    with pytest.raises(ValueError, match="positive integer"):
+        serialise_request_payload(MESSAGES, max_output_tokens=value)  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize("value", [0, 1, "false", None])
+def test_reasoning_override_is_strictly_validated(value: object) -> None:
+    with pytest.raises(ValueError, match="boolean"):
+        serialise_request_payload(MESSAGES, reasoning_effort=value)  # type: ignore[arg-type]
+
+
+def test_client_rejects_invalid_generation_policy_before_network() -> None:
+    http_client = httpx.Client(
+        transport=httpx.MockTransport(
+            lambda _: pytest.fail("network must not be called for invalid generation policy")
+        )
+    )
+    client = TinkerClient(api_key="test-key", client=http_client)
+
+    with pytest.raises(ValueError, match="positive integer"):
+        client.complete(MESSAGES, max_output_tokens=True)  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="boolean"):
+        client.complete(MESSAGES, reasoning_effort=1)  # type: ignore[arg-type]
+
+
 def test_client_preserves_raw_thinking_in_trace_but_returns_only_final_answer() -> None:
     thinking = "initial reasoning"
     answer = '{"route":"operations","summary":"final","operations":[]}'
@@ -362,6 +423,89 @@ def test_text_only_legacy_reasoning_prefix_is_removed() -> None:
     reply = client.complete(MESSAGES)
 
     assert reply.text == ANSWER
+
+
+def test_text_only_legacy_reasoning_preserves_a_fenced_json_answer() -> None:
+    thinking = "legacy reasoning"
+    answer = f"```json\n{ANSWER}\n```"
+    response_text = f"<think>{thinking}</think>\n{answer}"
+    attempts: list[dict[str, object]] = []
+    http_client = httpx.Client(
+        transport=httpx.MockTransport(lambda _: _stream_response(_success_events(response_text)))
+    )
+    client = TinkerClient(api_key="test-key", client=http_client)
+
+    reply = client.complete(MESSAGES, on_attempt=attempts.append)
+
+    assert reply.text == answer
+    assert attempts[0]["response"] == response_text
+    assert attempts[0]["answer_chars"] == len(answer)
+    assert attempts[0]["thinking_chars"] == len(thinking)
+
+
+def test_legacy_reasoning_with_draft_json_uses_the_final_object_suffix() -> None:
+    draft = '{"route":"operations","summary":"draft","operations":[]}'
+    thinking = f"Drafted {draft}, then checked it again."
+    answer = '{"route":"operations","summary":"final","operations":[]}'
+    response_text = f"{thinking}</think>\n{answer}"
+    attempts: list[dict[str, object]] = []
+    http_client = httpx.Client(
+        transport=httpx.MockTransport(lambda _: _stream_response(_success_events(response_text)))
+    )
+    client = TinkerClient(api_key="test-key", client=http_client)
+
+    reply = client.complete(MESSAGES, on_attempt=attempts.append)
+
+    assert reply.text == answer
+    assert attempts[0]["response"] == response_text
+    assert attempts[0]["answer_chars"] == len(answer)
+    assert attempts[0]["thinking_chars"] == len(thinking)
+
+
+def test_legacy_split_skips_delimiters_in_reasoning_and_final_json_strings() -> None:
+    thinking = "Compared first</think> and second drafts."
+    answer = '{"route":"operations","summary":"keep </think> as data","operations":[]}'
+    response_text = f"<think>{thinking}</think>{answer}"
+    attempts: list[dict[str, object]] = []
+    http_client = httpx.Client(
+        transport=httpx.MockTransport(lambda _: _stream_response(_success_events(response_text)))
+    )
+    client = TinkerClient(api_key="test-key", client=http_client)
+
+    reply = client.complete(MESSAGES, on_attempt=attempts.append)
+
+    assert reply.text == answer
+    assert attempts[0]["response"] == response_text
+    assert attempts[0]["answer_chars"] == len(answer)
+    assert attempts[0]["thinking_chars"] == len(thinking)
+
+
+@pytest.mark.parametrize(
+    "suffix",
+    [
+        "{not valid JSON}",
+        '[{"route":"operations"}]',
+        '"string answer"',
+        "null",
+    ],
+)
+def test_legacy_split_preserves_original_when_suffix_is_not_a_json_object(
+    suffix: str,
+) -> None:
+    response_text = f"  <think>reasoning</think>{suffix}  "
+    expected = response_text.strip()
+    attempts: list[dict[str, object]] = []
+    http_client = httpx.Client(
+        transport=httpx.MockTransport(lambda _: _stream_response(_success_events(response_text)))
+    )
+    client = TinkerClient(api_key="test-key", client=http_client)
+
+    reply = client.complete(MESSAGES, on_attempt=attempts.append)
+
+    assert reply.text == expected
+    assert attempts[0]["response"] == response_text
+    assert attempts[0]["answer_chars"] == len(expected)
+    assert attempts[0]["thinking_chars"] == 0
 
 
 def test_client_retries_only_a_bounded_number_and_exposes_each_attempt() -> None:
@@ -554,7 +698,7 @@ def test_null_cache_usage_is_treated_as_zero() -> None:
 
 
 def test_non_clean_stop_reason_is_not_accepted_or_retried() -> None:
-    stream_events = _success_events()
+    stream_events = _success_events(output_usage={"output_tokens": 23})
     message_delta = stream_events[-2][1]
     assert isinstance(message_delta, dict)
     delta = message_delta["delta"]
@@ -571,12 +715,33 @@ def test_non_clean_stop_reason_is_not_accepted_or_retried() -> None:
     http_client = httpx.Client(transport=httpx.MockTransport(handler))
     client = TinkerClient(api_key="test-key", client=http_client)
 
-    with pytest.raises(ModelResponseError, match="clean end_turn"):
+    with pytest.raises(ModelTruncationError, match="clean end_turn") as raised:
         client.complete(MESSAGES, on_attempt=attempts.append)
 
     assert calls == 1
+    assert raised.value.output_tokens == 23
+    assert raised.value.stop_reason == "max_tokens"
     assert attempts[0]["retryable"] is False
     assert attempts[0]["stop_reason"] == "max_tokens"
+    assert attempts[0]["output_tokens"] == 23
+
+
+def test_other_non_clean_stop_reason_remains_an_ordinary_response_error() -> None:
+    stream_events = _success_events(output_usage={"output_tokens": 11})
+    message_delta = stream_events[-2][1]
+    assert isinstance(message_delta, dict)
+    delta = message_delta["delta"]
+    assert isinstance(delta, dict)
+    delta["stop_reason"] = "stop_sequence"
+    http_client = httpx.Client(
+        transport=httpx.MockTransport(lambda _: _stream_response(stream_events))
+    )
+    client = TinkerClient(api_key="test-key", client=http_client)
+
+    with pytest.raises(ModelResponseError, match="stop_sequence") as raised:
+        client.complete(MESSAGES)
+
+    assert not isinstance(raised.value, ModelTruncationError)
 
 
 def test_ping_events_and_sse_comments_do_not_change_decoder_state() -> None:
@@ -884,16 +1049,19 @@ def test_overloaded_stream_error_after_generated_content_is_not_retried() -> Non
     assert attempts[0]["generated_content"] is True
 
 
-def test_client_rejects_reasoning_without_a_final_answer() -> None:
+def test_legacy_reasoning_without_a_json_object_suffix_is_preserved() -> None:
+    response_text = "<think>reasoning</think>  "
+    attempts: list[dict[str, object]] = []
     http_client = httpx.Client(
-        transport=httpx.MockTransport(
-            lambda _: _stream_response(_success_events("<think>reasoning</think>  "))
-        )
+        transport=httpx.MockTransport(lambda _: _stream_response(_success_events(response_text)))
     )
     client = TinkerClient(api_key="test-key", client=http_client)
 
-    with pytest.raises(ModelResponseError, match="no answer after reasoning"):
-        client.complete(MESSAGES)
+    reply = client.complete(MESSAGES, on_attempt=attempts.append)
+
+    assert reply.text == response_text.strip()
+    assert attempts[0]["answer_chars"] == len(response_text.strip())
+    assert attempts[0]["thinking_chars"] == 0
 
 
 def test_missing_key_is_reported_without_accepting_blank_values(

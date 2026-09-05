@@ -10,6 +10,7 @@ import pytest
 
 from exactsource.artifacts import ArtifactError, TraceRecorder, read_jsonl
 from exactsource.cli import run_cli
+from exactsource.config import CELL_MAX_OUTPUT_TOKENS, SHEET_MAX_OUTPUT_TOKENS
 from exactsource.contracts import (
     ContextPack,
     ModelReply,
@@ -19,6 +20,8 @@ from exactsource.contracts import (
     SolveResult,
     TaskSpec,
 )
+from exactsource.model import ModelTruncationError
+from exactsource.plans import PlanParseError
 from exactsource.runner import DefaultTaskSolver, TaskSolveError, run_tasks
 
 
@@ -38,6 +41,18 @@ def _task(tmp_path: Path, task_id: str, value: str) -> TaskSpec:
         spreadsheet_path=f"spreadsheet/{task_id}",
         init_xlsx=init,
         answer_ranges=(QualifiedRange(sheet="Sheet1", cells="A1"),),
+    )
+
+
+def _sheet_task(tmp_path: Path, task_id: str, value: str) -> TaskSpec:
+    cell_task = _task(tmp_path, task_id, value)
+    return TaskSpec(
+        id=cell_task.id,
+        instruction_type="Sheet-Level Manipulation",
+        instruction="Update the requested workbook output.",
+        spreadsheet_path=cell_task.spreadsheet_path,
+        init_xlsx=cell_task.init_xlsx,
+        answer_ranges=cell_task.answer_ranges,
     )
 
 
@@ -159,33 +174,320 @@ def test_runner_rejects_duplicate_task_ids_before_writing(tmp_path: Path) -> Non
 
 
 class _FakeClient:
-    def __init__(self, replies: list[str]) -> None:
+    def __init__(self, replies: list[str | Exception]) -> None:
         self.replies = replies
         self.calls = 0
+        self.requests: list[dict[str, object]] = []
 
-    def complete(self, messages, *, on_attempt=None) -> ModelReply:
+    def complete(
+        self,
+        messages,
+        *,
+        max_output_tokens,
+        reasoning_effort,
+        on_attempt=None,
+    ) -> ModelReply:
         reply = self.replies[self.calls]
         self.calls += 1
+        self.requests.append(
+            {
+                "messages": [dict(message) for message in messages],
+                "max_output_tokens": max_output_tokens,
+                "reasoning_effort": reasoning_effort,
+            }
+        )
+        truncated = isinstance(reply, ModelTruncationError)
+        if truncated:
+            response: str | None = "partial-response-must-not-be-replayed"
+        elif isinstance(reply, Exception):
+            response = None
+        else:
+            response = reply
         if on_attempt is not None:
             on_attempt(
                 {
                     "attempt": 1,
                     "model": "ignored-by-runtime",
                     "temperature": 0,
-                    "status": "success",
+                    "max_output_tokens": max_output_tokens,
+                    "reasoning_effort": reasoning_effort,
+                    "status": "error" if isinstance(reply, Exception) else "success",
                     "retryable": False,
                     "http_status": 200,
-                    "response": reply,
-                    "error": None,
+                    "response": response,
+                    "error": str(reply) if isinstance(reply, Exception) else None,
                     "input_tokens": 10,
-                    "output_tokens": 5,
+                    "output_tokens": reply.output_tokens if truncated else 5,
+                    "stop_reason": "max_tokens" if truncated else "end_turn",
                     "latency_ms": 2,
                 }
             )
+        if isinstance(reply, Exception):
+            raise reply
         return ModelReply(reply, 10, 5, 2)
 
     def close(self) -> None:
         pass
+
+
+def _policy_test_plan() -> SolvePlan:
+    return SolvePlan(
+        route="operations",
+        summary="Set the answer",
+        operations=[SetValue(op="set_value", sheet="Sheet1", cell="A1", value="done")],
+    )
+
+
+def _policy_test_solver(
+    client: _FakeClient,
+    *,
+    semantic_repairs: int = 1,
+) -> DefaultTaskSolver:
+    return DefaultTaskSolver(
+        client,
+        context_builder=lambda _: ContextPack(
+            text="workbook", original_chars=8, truncated=False, sha256="abc"
+        ),
+        message_builder=lambda *_: [
+            {"role": "system", "content": "return json"},
+            {"role": "user", "content": "solve"},
+        ],
+        semantic_repairs=semantic_repairs,
+    )
+
+
+def test_cell_max_tokens_uses_one_fresh_no_think_recovery(tmp_path: Path) -> None:
+    task = _task(tmp_path, "capped-cell", "initial")
+    partial = ModelTruncationError(
+        "provider stopped at max_tokens",
+        output_tokens=CELL_MAX_OUTPUT_TOKENS,
+    )
+    client = _FakeClient([partial, _policy_test_plan().model_dump_json()])
+    solver = _policy_test_solver(client)
+    working = tmp_path / "working-capped-cell.xlsx"
+    working.write_bytes(task.init_xlsx.read_bytes())
+    trace = TraceRecorder(task.id)
+
+    result = solver(task, working, trace)
+
+    assert result.status == "ok"
+    assert client.calls == 2
+    assert client.requests[0] == {
+        "messages": [
+            {"role": "system", "content": "return json"},
+            {"role": "user", "content": "solve"},
+        ],
+        "max_output_tokens": CELL_MAX_OUTPUT_TOKENS,
+        "reasoning_effort": True,
+    }
+    recovery_messages = client.requests[1]["messages"]
+    assert recovery_messages == [
+        {"role": "system", "content": "return json"},
+        {"role": "user", "content": "solve\n\n/no_think"},
+        {"role": "assistant", "content": "<think>\n\n</think>\n\n"},
+    ]
+    assert "partial-response-must-not-be-replayed" not in json.dumps(recovery_messages)
+    assert client.requests[1]["max_output_tokens"] == CELL_MAX_OUTPUT_TOKENS
+    assert client.requests[1]["reasoning_effort"] is False
+    assert _cell(working) == "done"
+    assert len(trace.records) == 2
+    assert trace.records[0]["semantic_attempt"] == 1
+    assert trace.records[0]["semantic_repair"] is False
+    assert trace.records[0]["generation_policy"] == "cell_reasoning"
+    assert trace.records[0]["stop_reason"] == "max_tokens"
+    assert trace.records[0]["output_tokens"] == CELL_MAX_OUTPUT_TOKENS
+    assert trace.records[0]["plan_status"] == "not_reached"
+    assert trace.records[1]["semantic_attempt"] == 2
+    assert trace.records[1]["semantic_repair"] is True
+    assert trace.records[1]["generation_policy"] == "cell_max_tokens_no_think_recovery"
+    assert trace.records[1]["recovery_reason"] == "max_tokens"
+    assert trace.records[1]["max_output_tokens"] == CELL_MAX_OUTPUT_TOKENS
+    assert trace.records[1]["reasoning_effort"] is False
+    assert trace.records[1]["plan_status"] == "accepted"
+
+
+def test_cell_max_tokens_without_repair_budget_fails_after_one_call(tmp_path: Path) -> None:
+    task = _task(tmp_path, "capped-cell-no-budget", "initial")
+    client = _FakeClient(
+        [
+            ModelTruncationError(
+                "provider stopped at max_tokens",
+                output_tokens=CELL_MAX_OUTPUT_TOKENS,
+            ),
+            _policy_test_plan().model_dump_json(),
+        ]
+    )
+    solver = _policy_test_solver(client, semantic_repairs=0)
+    working = tmp_path / "working-capped-cell-no-budget.xlsx"
+    working.write_bytes(task.init_xlsx.read_bytes())
+
+    with pytest.raises(ModelTruncationError):
+        solver(task, working, TraceRecorder(task.id))
+
+    assert client.calls == 1
+
+
+def test_cell_truncation_recovery_is_counted_as_one_semantic_repair(
+    tmp_path: Path,
+) -> None:
+    task = _task(tmp_path, "capped-cell-metrics", "initial")
+    client = _FakeClient(
+        [
+            ModelTruncationError(
+                "provider stopped at max_tokens",
+                output_tokens=CELL_MAX_OUTPUT_TOKENS,
+            ),
+            _policy_test_plan().model_dump_json(),
+        ]
+    )
+
+    summary = run_tasks(
+        [task],
+        tmp_path / "capped-cell-metrics-out",
+        _policy_test_solver(client),
+        log=lambda _: None,
+    )
+
+    metrics = json.loads(summary.run_metrics_path.read_text(encoding="utf-8"))
+    assert metrics["tasks"] == {"total": 1, "succeeded": 1, "failed": 0}
+    assert metrics["model"]["calls"] == 2
+    assert metrics["model"]["attempts"] == 2
+    assert metrics["usage"]["output_tokens"]["known_sum"] == (CELL_MAX_OUTPUT_TOKENS + 5)
+    assert metrics["reliability"]["semantic_repairs"] == 1
+    assert metrics["reliability"]["provider_status_counts"] == {
+        "error": 1,
+        "success": 1,
+    }
+
+
+def test_sheet_max_tokens_does_not_trigger_capped_recovery(tmp_path: Path) -> None:
+    task = _sheet_task(tmp_path, "capped-sheet", "initial")
+    client = _FakeClient(
+        [
+            ModelTruncationError(
+                "provider stopped at max_tokens",
+                output_tokens=SHEET_MAX_OUTPUT_TOKENS,
+            ),
+            _policy_test_plan().model_dump_json(),
+        ]
+    )
+    solver = _policy_test_solver(client)
+    working = tmp_path / "working-capped-sheet.xlsx"
+    working.write_bytes(task.init_xlsx.read_bytes())
+    trace = TraceRecorder(task.id)
+
+    with pytest.raises(ModelTruncationError):
+        solver(task, working, trace)
+
+    assert client.calls == 1
+    assert client.requests[0]["max_output_tokens"] == SHEET_MAX_OUTPUT_TOKENS
+    assert client.requests[0]["reasoning_effort"] is True
+    assert trace.records[0]["generation_policy"] == "sheet_reasoning"
+    assert trace.records[0]["plan_status"] == "not_reached"
+
+
+def test_rejected_cell_truncation_recovery_never_makes_a_third_call(tmp_path: Path) -> None:
+    task = _task(tmp_path, "capped-cell-rejected", "initial")
+    client = _FakeClient(
+        [
+            ModelTruncationError(
+                "provider stopped at max_tokens",
+                output_tokens=CELL_MAX_OUTPUT_TOKENS,
+            ),
+            "not a solve plan",
+            _policy_test_plan().model_dump_json(),
+        ]
+    )
+    solver = _policy_test_solver(client, semantic_repairs=2)
+    working = tmp_path / "working-capped-cell-rejected.xlsx"
+    working.write_bytes(task.init_xlsx.read_bytes())
+
+    with pytest.raises(PlanParseError):
+        solver(task, working, TraceRecorder(task.id))
+
+    assert client.calls == 2
+    assert client.requests[1]["reasoning_effort"] is False
+
+
+def test_unsafe_cell_truncation_recovery_fails_without_changing_workbook(
+    tmp_path: Path,
+) -> None:
+    task = _task(tmp_path, "capped-cell-unsafe", "initial")
+    unsafe_plan = SolvePlan(
+        route="python",
+        summary="Use a disallowed route",
+        python_code="def transform(wb):\n    wb.active['A1'] = 'unsafe'",
+    )
+    client = _FakeClient(
+        [
+            ModelTruncationError(
+                "provider stopped at max_tokens",
+                output_tokens=CELL_MAX_OUTPUT_TOKENS,
+            ),
+            unsafe_plan.model_dump_json(),
+            _policy_test_plan().model_dump_json(),
+        ]
+    )
+    solver = _policy_test_solver(client, semantic_repairs=2)
+    working = tmp_path / "working-capped-cell-unsafe.xlsx"
+    working.write_bytes(task.init_xlsx.read_bytes())
+
+    with pytest.raises(TaskSolveError, match="not allowed for cell-level"):
+        solver(task, working, TraceRecorder(task.id))
+
+    assert client.calls == 2
+    assert _cell(working) == "initial"
+
+
+def test_truncated_ordinary_cell_repair_never_makes_a_third_call(tmp_path: Path) -> None:
+    task = _task(tmp_path, "capped-cell-repair", "initial")
+    client = _FakeClient(
+        [
+            "not a solve plan",
+            ModelTruncationError(
+                "provider stopped at max_tokens",
+                output_tokens=CELL_MAX_OUTPUT_TOKENS,
+            ),
+            _policy_test_plan().model_dump_json(),
+        ]
+    )
+    solver = _policy_test_solver(client, semantic_repairs=2)
+    working = tmp_path / "working-capped-cell-repair.xlsx"
+    working.write_bytes(task.init_xlsx.read_bytes())
+
+    with pytest.raises(ModelTruncationError):
+        solver(task, working, TraceRecorder(task.id))
+
+    assert client.calls == 2
+    assert client.requests[1]["max_output_tokens"] == CELL_MAX_OUTPUT_TOKENS
+    assert client.requests[1]["reasoning_effort"] is True
+    repair_messages = client.requests[1]["messages"]
+    assert isinstance(repair_messages, list)
+    assert repair_messages[-2] == {"role": "assistant", "content": "not a solve plan"}
+
+
+def test_sheet_completed_rejection_keeps_one_reasoning_repair_at_32k(tmp_path: Path) -> None:
+    task = _sheet_task(tmp_path, "sheet-repair-policy", "initial")
+    client = _FakeClient(["not a solve plan", _policy_test_plan().model_dump_json()])
+    solver = _policy_test_solver(client)
+    working = tmp_path / "working-sheet-repair-policy.xlsx"
+    working.write_bytes(task.init_xlsx.read_bytes())
+    trace = TraceRecorder(task.id)
+
+    result = solver(task, working, trace)
+
+    assert result.status == "ok"
+    assert client.calls == 2
+    assert [request["max_output_tokens"] for request in client.requests] == [
+        SHEET_MAX_OUTPUT_TOKENS,
+        SHEET_MAX_OUTPUT_TOKENS,
+    ]
+    assert [request["reasoning_effort"] for request in client.requests] == [True, True]
+    assert [record["generation_policy"] for record in trace.records] == [
+        "sheet_reasoning",
+        "sheet_reasoning",
+    ]
+    assert [record["semantic_repair"] for record in trace.records] == [False, True]
 
 
 def test_default_solver_repairs_one_rejected_plan_and_traces_each_call(tmp_path: Path) -> None:
@@ -233,6 +535,16 @@ def test_default_solver_repairs_one_rejected_plan_and_traces_each_call(tmp_path:
 
     assert result.status == "ok"
     assert client.calls == 2
+    assert [request["max_output_tokens"] for request in client.requests] == [
+        CELL_MAX_OUTPUT_TOKENS,
+        CELL_MAX_OUTPUT_TOKENS,
+    ]
+    assert [request["reasoning_effort"] for request in client.requests] == [True, True]
+    repaired_messages = client.requests[1]["messages"]
+    assert isinstance(repaired_messages, list)
+    assert repaired_messages[-2] == {"role": "assistant", "content": "bad"}
+    assert repaired_messages[-1]["role"] == "user"
+    assert "invalid first plan" in repaired_messages[-1]["content"]
     assert _cell(working) == "done"
     provider_records = [row for row in trace.records if row.get("event") == "provider_attempt"]
     assert provider_records == []
@@ -243,6 +555,9 @@ def test_default_solver_repairs_one_rejected_plan_and_traces_each_call(tmp_path:
     assert trace.records[0]["provider_status"] == "success"
     assert trace.records[0]["plan_status"] == "parse_rejected"
     assert trace.records[0]["semantic_repair"] is False
+    assert trace.records[0]["generation_policy"] == "cell_reasoning"
+    assert trace.records[0]["max_output_tokens"] == CELL_MAX_OUTPUT_TOKENS
+    assert trace.records[0]["reasoning_effort"] is True
     assert trace.records[0]["logical_call_terminal"] is True
     assert trace.records[0]["logical_call_latency_ms"] == 2
     assert isinstance(trace.records[0]["context_build_latency_ms"], int)
@@ -252,6 +567,9 @@ def test_default_solver_repairs_one_rejected_plan_and_traces_each_call(tmp_path:
     assert trace.records[1]["provider_status"] == "success"
     assert trace.records[1]["plan_status"] == "accepted"
     assert trace.records[1]["semantic_repair"] is True
+    assert trace.records[1]["generation_policy"] == "cell_reasoning"
+    assert trace.records[1]["max_output_tokens"] == CELL_MAX_OUTPUT_TOKENS
+    assert trace.records[1]["reasoning_effort"] is True
     assert isinstance(trace.records[1]["plan_apply_latency_ms"], int)
     assert trace.records[1]["tool"] == "apply_operations"
 

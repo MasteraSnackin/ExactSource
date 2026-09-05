@@ -31,12 +31,17 @@ from exactsource.artifacts import (
 )
 from exactsource.config import (
     API_KEY_ENV,
+    CELL_MAX_OUTPUT_TOKENS,
+    CELL_TRUNCATION_RECOVERY_REASONING_EFFORT,
     CONCURRENCY,
     MODEL_NAME,
+    REASONING_EFFORT,
     SEMANTIC_REPAIRS,
+    SHEET_MAX_OUTPUT_TOKENS,
 )
 from exactsource.contracts import ContextPack, ModelReply, SolvePlan, SolveResult, TaskSpec
 from exactsource.metrics import write_run_metrics
+from exactsource.model import ModelTruncationError
 
 
 class TaskSolver(Protocol):
@@ -77,6 +82,8 @@ class ModelClient(Protocol):
         self,
         messages: list[dict[str, str]],
         *,
+        max_output_tokens: int,
+        reasoning_effort: bool,
         on_attempt: Callable[[dict[str, object]], None] | None = None,
     ) -> ModelReply: ...
 
@@ -88,6 +95,32 @@ MessageBuilder = Callable[[TaskSpec, ContextPack], list[dict[str, str]]]
 PlanParser = Callable[[str], SolvePlan]
 OperationApplier = Callable[[SolvePlan, TaskSpec, Path, Path], dict[str, object]]
 TransformRunner = Callable[[str, Path, Path], dict[str, object]]
+
+
+@dataclass(frozen=True, slots=True)
+class _GenerationPolicy:
+    name: str
+    max_output_tokens: int
+    reasoning_effort: bool
+    recovery_reason: str | None = None
+
+
+_CELL_POLICY = _GenerationPolicy(
+    name="cell_reasoning",
+    max_output_tokens=CELL_MAX_OUTPUT_TOKENS,
+    reasoning_effort=REASONING_EFFORT,
+)
+_SHEET_POLICY = _GenerationPolicy(
+    name="sheet_reasoning",
+    max_output_tokens=SHEET_MAX_OUTPUT_TOKENS,
+    reasoning_effort=REASONING_EFFORT,
+)
+_CELL_TRUNCATION_RECOVERY_POLICY = _GenerationPolicy(
+    name="cell_max_tokens_no_think_recovery",
+    max_output_tokens=CELL_MAX_OUTPUT_TOKENS,
+    reasoning_effort=CELL_TRUNCATION_RECOVERY_REASONING_EFFORT,
+    recovery_reason="max_tokens",
+)
 
 
 class DefaultTaskSolver:
@@ -147,13 +180,21 @@ class DefaultTaskSolver:
         message_build_latency_ms = _elapsed_ms(messages_started)
         prior_reply: str | None = None
         last_error: Exception | None = None
+        default_policy = _CELL_POLICY if task.is_cell_level else _SHEET_POLICY
+        next_call_is_truncation_recovery = False
 
         for semantic_attempt in range(self.semantic_repairs + 1):
-            request_messages = (
-                messages
-                if semantic_attempt == 0
-                else _repair_messages(messages, prior_reply or "", last_error)
-            )
+            is_truncation_recovery = next_call_is_truncation_recovery
+            if is_truncation_recovery:
+                request_messages = _cell_truncation_recovery_messages(messages)
+                policy = _CELL_TRUNCATION_RECOVERY_POLICY
+            else:
+                request_messages = (
+                    messages
+                    if semantic_attempt == 0
+                    else _repair_messages(messages, prior_reply or "", last_error)
+                )
+                policy = default_policy
             prompt_text = json.dumps(request_messages, ensure_ascii=False, separators=(",", ":"))
             message_chars = sum(len(message["content"]) for message in request_messages)
             record_count_before_call = len(trace.records)
@@ -165,6 +206,7 @@ class DefaultTaskSolver:
                 semantic_attempt_number: int = semantic_attempt + 1,
                 attempt_prompt: str = prompt_text,
                 attempt_message_chars: int = message_chars,
+                attempt_policy: _GenerationPolicy = policy,
             ) -> None:
                 record = dict(event)
                 record.setdefault("provider_status", record.get("status"))
@@ -178,15 +220,42 @@ class DefaultTaskSolver:
                         "semantic_repair": semantic_attempt_number > 1,
                         "prompt": attempt_prompt,
                         "context": context_evidence,
+                        "generation_policy": attempt_policy.name,
+                        "max_output_tokens": attempt_policy.max_output_tokens,
+                        "reasoning_effort": attempt_policy.reasoning_effort,
                     }
                 )
+                if attempt_policy.recovery_reason is not None:
+                    record["recovery_reason"] = attempt_policy.recovery_reason
                 if semantic_attempt_number == 1 and record.get("attempt") == 1:
                     record["context_build_latency_ms"] = context_build_latency_ms
                     record["message_build_latency_ms"] = message_build_latency_ms
                 trace.record(record)
 
             try:
-                reply = self.client.complete(request_messages, on_attempt=on_attempt)
+                reply = self.client.complete(
+                    request_messages,
+                    max_output_tokens=policy.max_output_tokens,
+                    reasoning_effort=policy.reasoning_effort,
+                    on_attempt=on_attempt,
+                )
+            except ModelTruncationError:
+                if len(trace.records) > record_count_before_call:
+                    trace.update_last(
+                        logical_call_terminal=True,
+                        logical_call_latency_ms=_elapsed_ms(logical_call_started),
+                        plan_status="not_reached",
+                    )
+                can_recover = (
+                    task.is_cell_level
+                    and semantic_attempt == 0
+                    and self.semantic_repairs >= 1
+                    and not is_truncation_recovery
+                )
+                if can_recover:
+                    next_call_is_truncation_recovery = True
+                    continue
+                raise
             except Exception:
                 if len(trace.records) > record_count_before_call:
                     trace.update_last(
@@ -221,7 +290,7 @@ class DefaultTaskSolver:
                     error=_safe_error(error),
                     plan_parse_latency_ms=_elapsed_ms(parse_started),
                 )
-                if semantic_attempt >= self.semantic_repairs:
+                if is_truncation_recovery or semantic_attempt >= self.semantic_repairs:
                     raise
                 continue
 
@@ -243,7 +312,7 @@ class DefaultTaskSolver:
                     plan_parse_latency_ms=plan_parse_latency_ms,
                     plan_apply_latency_ms=_elapsed_ms(apply_started),
                 )
-                if semantic_attempt >= self.semantic_repairs:
+                if is_truncation_recovery or semantic_attempt >= self.semantic_repairs:
                     raise
                 continue
 
@@ -430,6 +499,27 @@ def _repair_messages(
         {"role": "assistant", "content": previous_reply},
         {"role": "user", "content": instruction},
     ]
+
+
+def _cell_truncation_recovery_messages(
+    base: list[dict[str, str]],
+) -> list[dict[str, str]]:
+    """Request one fresh answer-only completion without replaying partial output."""
+
+    messages = [dict(message) for message in base]
+    final_user_index = next(
+        (index for index in range(len(messages) - 1, -1, -1) if messages[index]["role"] == "user"),
+        None,
+    )
+    if final_user_index is None:
+        raise TaskSolveError("cell truncation recovery requires a user instruction")
+    final_user = messages[final_user_index]
+    messages[final_user_index] = {
+        "role": "user",
+        "content": f"{final_user['content']}\n\n/no_think",
+    }
+    messages.append({"role": "assistant", "content": "<think>\n\n</think>\n\n"})
+    return messages
 
 
 def _validate_tasks(tasks: Sequence[TaskSpec]) -> None:

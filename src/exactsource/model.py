@@ -42,6 +42,10 @@ _SECRET_PATTERNS = (
     re.compile(r"(?i)(bearer\s+)[A-Za-z0-9._~+/=-]{8,}"),
     re.compile(r"\bsk-or-v1-[A-Za-z0-9_-]+\b"),
 )
+_LEGACY_FENCED_JSON_OBJECT_RE = re.compile(
+    r"^```(?:json)?\s*(\{.*\})\s*```$",
+    re.IGNORECASE | re.DOTALL,
+)
 
 
 class ModelError(RuntimeError):
@@ -58,6 +62,15 @@ class ModelTransportError(ModelError):
 
 class ModelResponseError(ModelError):
     """Raised when a successful response violates the expected response shape."""
+
+
+class ModelTruncationError(ModelResponseError):
+    """Raised when the provider reaches its output-token cap before completion."""
+
+    def __init__(self, message: str, *, output_tokens: int | None) -> None:
+        super().__init__(message)
+        self.output_tokens = output_tokens
+        self.stop_reason = "max_tokens"
 
 
 class _ProviderStreamError(ModelTransportError):
@@ -137,19 +150,36 @@ def _anthropic_messages(
     return ("\n\n".join(system_parts) if system_parts else None, conversation)
 
 
+def _validated_max_output_tokens(value: object) -> int:
+    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+        raise ValueError("max_output_tokens must be a positive integer")
+    return value
+
+
+def _validated_reasoning_effort(value: object) -> bool:
+    if not isinstance(value, bool):
+        raise ValueError("reasoning_effort must be a boolean")
+    return value
+
+
 def serialise_request_payload(
     messages: list[dict[str, str]],
+    *,
+    max_output_tokens: int = MAX_OUTPUT_TOKENS,
+    reasoning_effort: bool = REASONING_EFFORT,
 ) -> tuple[list[dict[str, str]], dict[str, Any], str]:
-    """Build the exact fixed provider payload without making a provider request."""
+    """Build one validated provider payload without making a provider request."""
 
     validated = _validated_messages(messages)
+    effective_max_output_tokens = _validated_max_output_tokens(max_output_tokens)
+    effective_reasoning_effort = _validated_reasoning_effort(reasoning_effort)
     system, conversation = _anthropic_messages(validated)
     payload: dict[str, Any] = {
         "model": MODEL_ID,
         "messages": conversation,
         "temperature": TEMPERATURE,
-        "max_tokens": MAX_OUTPUT_TOKENS,
-        "reasoning_effort": REASONING_EFFORT,
+        "max_tokens": effective_max_output_tokens,
+        "reasoning_effort": effective_reasoning_effort,
         "stream": True,
     }
     if system is not None:
@@ -163,46 +193,36 @@ def serialise_request_payload(
     return validated, payload, serialised
 
 
-def _strip_legacy_thinking(text: str) -> str:
-    """Remove a leading legacy Qwen reasoning wrapper from a text-only reply.
+def _split_legacy_thinking(text: str) -> tuple[str, str]:
+    """Split a legacy text-only reasoning prelude from its JSON-object answer.
 
-    Native Anthropic thinking blocks are separated structurally by the stream
-    decoder. This fallback exists only for compatible endpoints that place a
-    leading reasoning prelude and ``</think>`` marker in one text block. A marker
-    occurring after JSON has begun is ordinary answer data and must be preserved.
+    Compatible endpoints can place reasoning and the final answer in one text
+    block separated by ``</think>``. Reasoning may itself contain draft JSON, and
+    the final JSON may contain the delimiter as string data, so delimiter
+    candidates are checked from right to left. A split is accepted only when the
+    complete trimmed suffix is a JSON object. Otherwise the original trimmed text
+    remains the answer and no reasoning is inferred.
     """
-
-    answer = text.strip()
-    closing = "</think>"
-    marker = answer.find(closing)
-    if marker >= 0:
-        first_json_indexes = [index for index in (answer.find("{"), answer.find("[")) if index >= 0]
-        first_json = min(first_json_indexes) if first_json_indexes else None
-        if answer.startswith("<think>") or first_json is None or marker < first_json:
-            answer = answer[marker + len(closing) :].strip()
-    if not answer:
-        raise ModelResponseError("provider response has no answer after reasoning")
-    return answer
-
-
-def _legacy_thinking_text(text: str) -> str:
-    """Return a legacy text-only reasoning prelude, without wrapper markers."""
 
     candidate = text.strip()
     closing = "</think>"
-    marker = candidate.find(closing)
-    if marker < 0:
-        return ""
-    first_json_indexes = [
-        index for index in (candidate.find("{"), candidate.find("[")) if index >= 0
-    ]
-    first_json = min(first_json_indexes) if first_json_indexes else None
-    if not (candidate.startswith("<think>") or first_json is None or marker < first_json):
-        return ""
-    reasoning = candidate[:marker]
-    if reasoning.startswith("<think>"):
-        reasoning = reasoning[len("<think>") :]
-    return reasoning
+    marker = candidate.rfind(closing)
+    while marker >= 0:
+        answer = candidate[marker + len(closing) :].strip()
+        fenced = _LEGACY_FENCED_JSON_OBJECT_RE.fullmatch(answer)
+        json_candidate = fenced.group(1).strip() if fenced else answer
+        try:
+            decoded = json.loads(json_candidate)
+        except json.JSONDecodeError:
+            pass
+        else:
+            if isinstance(decoded, dict):
+                reasoning = candidate[:marker]
+                if reasoning.startswith("<think>"):
+                    reasoning = reasoning[len("<think>") :]
+                return answer, reasoning
+        marker = candidate.rfind(closing, 0, marker)
+    return candidate, ""
 
 
 def _retry_stagger(payload_fingerprint: bytes, attempt: int) -> float:
@@ -542,9 +562,6 @@ class _AnthropicStreamDecoder:
         stop_reason = delta.get("stop_reason")
         if stop_reason is not None and (not isinstance(stop_reason, str) or not stop_reason):
             raise ModelResponseError("provider message_delta has invalid stop_reason")
-        if stop_reason is not None and stop_reason != "end_turn":
-            self.stop_reason = stop_reason
-            raise ModelResponseError(f"provider stopped before a clean end_turn ({stop_reason!r})")
         usage = payload.get("usage")
         if not isinstance(usage, Mapping):
             raise ModelResponseError("provider response usage is malformed")
@@ -554,6 +571,13 @@ class _AnthropicStreamDecoder:
         self.output_tokens = output_tokens
         self.stop_reason = stop_reason
         self.message_delta_count += 1
+        if stop_reason == "max_tokens":
+            raise ModelTruncationError(
+                "provider stopped before a clean end_turn ('max_tokens')",
+                output_tokens=output_tokens,
+            )
+        if stop_reason is not None and stop_reason != "end_turn":
+            raise ModelResponseError(f"provider stopped before a clean end_turn ({stop_reason!r})")
 
     def _message_stop(self) -> None:
         if not self.message_delta_count:
@@ -583,7 +607,8 @@ class _AnthropicStreamDecoder:
             if not answer:
                 raise ModelResponseError("provider response has no answer after reasoning")
             return answer
-        return _strip_legacy_thinking(text)
+        answer, _ = _split_legacy_thinking(text)
+        return answer
 
     def thinking_text(self) -> str:
         """Return reasoning content without synthetic ``<think>`` wrappers."""
@@ -592,7 +617,8 @@ class _AnthropicStreamDecoder:
         if any(block.kind == "thinking" for block in self.blocks):
             return native
         text = "".join("".join(block.parts) for block in self.blocks if block.kind == "text")
-        return _legacy_thinking_text(text)
+        _, thinking = _split_legacy_thinking(text)
+        return thinking
 
     def finish(self) -> dict[str, Any]:
         if not self.stopped:
@@ -681,6 +707,8 @@ class TinkerClient:
         self,
         messages: list[dict[str, str]],
         *,
+        max_output_tokens: int = MAX_OUTPUT_TOKENS,
+        reasoning_effort: bool = REASONING_EFFORT,
         on_attempt: Callable[[dict[str, object]], None] | None = None,
     ) -> ModelReply:
         """Stream a completion, reporting every transport attempt when requested.
@@ -691,8 +719,15 @@ class TinkerClient:
         are never replayed because doing so can duplicate paid inference.
         """
 
-        validated, payload, serialised_payload = serialise_request_payload(messages)
+        validated, payload, serialised_payload = serialise_request_payload(
+            messages,
+            max_output_tokens=max_output_tokens,
+            reasoning_effort=reasoning_effort,
+        )
+        effective_max_output_tokens = _validated_max_output_tokens(max_output_tokens)
+        effective_reasoning_effort = _validated_reasoning_effort(reasoning_effort)
         payload_fingerprint = serialised_payload.encode()
+        request_sha256 = hashlib.sha256(payload_fingerprint).hexdigest()
         request_chars = len(serialised_payload)
         message_chars = sum(len(message["content"]) for message in validated)
         headers = {
@@ -701,6 +736,15 @@ class TinkerClient:
             "Accept": "text/event-stream",
             "Content-Type": "application/json",
         }
+
+        def report_attempt(**fields: Any) -> None:
+            self._report_attempt(
+                on_attempt,
+                max_output_tokens=effective_max_output_tokens,
+                reasoning_effort=effective_reasoning_effort,
+                request_sha256=request_sha256,
+                **fields,
+            )
 
         started = time.monotonic()
         last_problem = "unknown transport failure"
@@ -732,8 +776,7 @@ class TinkerClient:
                         detail = redact_secrets(preview[:500], (self._api_key,))
                         last_problem = f"HTTP {response.status_code}: {detail}"
                         retry_delay = _retry_delay(response, attempt, payload_fingerprint)
-                        self._report_attempt(
-                            on_attempt,
+                        report_attempt(
                             attempt=attempt + 1,
                             status=("retry" if attempt < TRANSPORT_RETRIES else "error"),
                             retryable=True,
@@ -767,8 +810,7 @@ class TinkerClient:
                         )
                         problem = redact_secrets(preview[:500], (self._api_key,))
                         status = response.status_code
-                        self._report_attempt(
-                            on_attempt,
+                        report_attempt(
                             attempt=attempt + 1,
                             status="error",
                             retryable=False,
@@ -791,8 +833,7 @@ class TinkerClient:
                     if media_type != "text/event-stream":
                         preview = _response_preview(response)
                         error = "provider returned a non-SSE success response"
-                        self._report_attempt(
-                            on_attempt,
+                        report_attempt(
                             attempt=attempt + 1,
                             status="error",
                             retryable=False,
@@ -823,8 +864,7 @@ class TinkerClient:
                             attempt,
                             payload_fingerprint,
                         )
-                        self._report_attempt(
-                            on_attempt,
+                        report_attempt(
                             attempt=attempt + 1,
                             status=(
                                 "retry" if retryable and attempt < TRANSPORT_RETRIES else "error"
@@ -862,8 +902,7 @@ class TinkerClient:
                         raise ModelTransportError(problem) from None
                     except ModelResponseError as exc:
                         problem = redact_secrets(exc, (self._api_key,))
-                        self._report_attempt(
-                            on_attempt,
+                        report_attempt(
                             attempt=attempt + 1,
                             status="error",
                             retryable=False,
@@ -884,6 +923,11 @@ class TinkerClient:
                             request_chars=request_chars,
                             message_chars=message_chars,
                         )
+                        if isinstance(exc, ModelTruncationError):
+                            raise ModelTruncationError(
+                                problem,
+                                output_tokens=decoder.output_tokens,
+                            ) from None
                         raise ModelResponseError(problem) from None
             except httpx.TransportError as exc:
                 if active_response is not None:
@@ -894,8 +938,7 @@ class TinkerClient:
                 last_problem = redact_secrets(exc, (self._api_key,))
                 retryable = not decoder.generated_content and not decoder.stopped
                 retry_delay = _retry_delay(None, attempt, payload_fingerprint)
-                self._report_attempt(
-                    on_attempt,
+                report_attempt(
                     attempt=attempt + 1,
                     status=("retry" if retryable and attempt < TRANSPORT_RETRIES else "error"),
                     retryable=retryable,
@@ -931,8 +974,7 @@ class TinkerClient:
                 self._sleep(retry_delay)
                 continue
 
-            self._report_attempt(
-                on_attempt,
+            report_attempt(
                 attempt=attempt + 1,
                 status="success",
                 retryable=False,
@@ -975,6 +1017,9 @@ class TinkerClient:
         response_text: str | None,
         error: str | None,
         started: float,
+        max_output_tokens: int,
+        reasoning_effort: bool,
+        request_sha256: str,
         input_tokens: int | None = None,
         output_tokens: int | None = None,
         cache_creation_input_tokens: int | None = None,
@@ -1001,8 +1046,9 @@ class TinkerClient:
                 "attempt": attempt,
                 "model": MODEL_ID,
                 "temperature": TEMPERATURE,
-                "max_output_tokens": MAX_OUTPUT_TOKENS,
-                "reasoning_effort": REASONING_EFFORT,
+                "max_output_tokens": max_output_tokens,
+                "reasoning_effort": reasoning_effort,
+                "request_sha256": request_sha256,
                 "provider": "tinker",
                 "transport": "anthropic_sse",
                 "status": status,
