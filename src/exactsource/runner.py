@@ -505,7 +505,7 @@ def _repair_messages(
 def _cell_truncation_recovery_messages(
     base: list[dict[str, str]],
 ) -> list[dict[str, str]]:
-    """Request one fresh answer-only completion without replaying partial output."""
+    """Request one fresh no-think-requested completion without replaying partial output."""
 
     messages = [dict(message) for message in base]
     final_user_index = next(

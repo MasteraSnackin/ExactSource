@@ -18,8 +18,8 @@ TEMPERATURE = 0.0
 # Cell plans are compact declarative JSON, so a 16k cap bounds cost while leaving
 # enough room for Qwen's reasoning prelude and the complete operations payload.
 CELL_MAX_OUTPUT_TOKENS = 16_000
-# A capped cell response gets one answer-only recovery with more room to finish
-# the operations payload; this does not change the ordinary cell-call budget.
+# A capped cell response gets one no-think-requested recovery with more room to
+# finish the operations payload; this does not change the ordinary cell budget.
 CELL_TRUNCATION_RECOVERY_MAX_OUTPUT_TOKENS = 32_000
 # Sheet transformations can contain substantial Python source and therefore use a
 # larger cap on both the initial generation and an ordinary semantic repair.
@@ -27,8 +27,8 @@ SHEET_MAX_OUTPUT_TOKENS = 32_000
 # Preserve the public client default for callers that do not select a task route.
 MAX_OUTPUT_TOKENS = CELL_MAX_OUTPUT_TOKENS
 REASONING_EFFORT = True
-# The cell recovery also adds Qwen's /no_think switch and an empty thinking
-# prefill so the larger allowance is spent on the answer rather than reasoning.
+# The cell recovery also adds Qwen's /no_think switch and an empty-thinking
+# prefill to bias the larger allowance towards the answer.
 CELL_TRUNCATION_RECOVERY_REASONING_EFFORT = False
 MODEL_CONNECT_TIMEOUT_SECONDS = 20.0
 MODEL_STREAM_READ_TIMEOUT_SECONDS = 300.0

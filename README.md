@@ -178,9 +178,10 @@ Keep the host-level elapsed time with the final result:
 /usr/bin/time -p ./run.sh /absolute/path/to/dataset /absolute/path/to/out
 ```
 
-`run_metrics.json` records task outcomes, model attempts, retries, repairs, token
-usage, character counts and latency. Missing measurements remain unknown rather
-than becoming zero. The only exception is Tinker's optional cache counters,
+`run_metrics.json` records task outcomes, model attempts, retries, ordinary
+repairs, max-token recoveries, token usage, character counts and latency. Missing
+measurements remain unknown rather than becoming zero. The only exception is
+Tinker's optional cache counters,
 which become zero when the protocol omits them or returns null.
 [The architecture document](docs/ARCHITECTURE.md#observability) explains the
 metric schema and timing boundary.
@@ -194,13 +195,21 @@ Inference settings live in `src/exactsource/config.py`:
 | Provider | Tinker Anthropic-compatible streaming endpoint |
 | Model | `Qwen/Qwen3.8-27B` |
 | Temperature | `0` |
-| Reasoning | Enabled with the supported Boolean setting |
-| Completion limit | `16,000` tokens |
+| Cell initial request and ordinary semantic repair | `16,000` tokens, reasoning requested with the supported Boolean setting |
+| Sheet initial request and ordinary semantic repair | `32,000` tokens, reasoning requested with the supported Boolean setting |
+| Initial cell `max_tokens` recovery | One fresh `32,000`-token, no-think-requested completion with Boolean reasoning disabled, `/no_think` and an empty-thinking prefill |
 | Transport retries | `2` after the first attempt |
-| Semantic repair attempts | `1` |
+| Second-call allowance | `1`: either an ordinary semantic repair or the initial-cell truncation recovery; never a third call |
 | Concurrent tasks | `4` |
 | Workbook context sent to the model | Up to `48,000` characters |
 | Prompt text saved per trace record | Up to `20,000` characters |
+
+The cell truncation recovery starts from the original request and does not replay
+the truncated response. Its controls bias the completion towards the answer, but
+provider compliance with the no-think request is not guaranteed. A truncated
+sheet request, a truncated ordinary repair or a truncated cell recovery does not
+open another logical model call. Transport retries remain bounded separately for
+each logical call.
 
 The model receives up to 48,000 characters of workbook context. Trace files store
 a separately shortened copy of the prompt, limited to 20,000 characters. Model
@@ -299,7 +308,9 @@ The public video link, team list and full benchmark result are still pending in
   model-generated Python safe for general-purpose use.
 - Formula checks reject visible references to external workbooks, legacy
   integrations and external services, malformed structural delimiters and
-  explicit references to absent worksheets. They do not prove function
+  explicit references to absent worksheets. A narrow deterministic check also
+  rejects a literal `VLOOKUP` or `HLOOKUP` return index that is provably outside
+  a bounded static A1 table range. The checks do not otherwise prove function
   availability, function arity, dynamic targets or calculated results.
   `INDIRECT(A1)` remains valid when its formula text contains no external target.
   The checks reject generated `HYPERLINK` and `IMAGE` calls. `copy_range` rejects

@@ -29,8 +29,10 @@ content is clipped.
 The runtime validates plan structure, worksheet names, ranges, aggregate write
 volume and newly introduced formulae before promoting a candidate workbook.
 Formula checks cover prohibited capabilities, malformed delimiters and explicit
-references to absent worksheets, but they do not claim to prove spreadsheet
-semantics or calculated results. Every streamed provider attempt is traced.
+references to absent worksheets. They also reject a literal `VLOOKUP` or
+`HLOOKUP` index that is provably outside a bounded static A1 range, but they do
+not claim broader spreadsheet semantics or calculated results. Every streamed
+provider attempt is traced.
 Individual failures receive a readable initial-workbook fallback so the remaining
 batch can finish.
 
@@ -47,8 +49,16 @@ as correctness evidence.
 - Exact model ID fixed in source: `Qwen/Qwen3.8-27B`
 - Trace model name: `tinker:Qwen/Qwen3.8-27B`
 - Temperature: `0`
-- Reasoning: enabled through the model's supported Boolean setting; the complete raw response is retained in traces
-- Maximum completion tokens: `16,000`
+- Cell initial request and ordinary semantic repair: maximum `16,000` completion
+  tokens with reasoning requested through the model's supported Boolean setting
+- Sheet initial request and ordinary semantic repair: maximum `32,000` completion
+  tokens with reasoning requested through the model's supported Boolean setting
+- Initial-cell truncation recovery: only an initial cell request that stops at
+  `max_tokens` receives one fresh `32,000`-token request with Boolean reasoning
+  disabled, `/no_think` appended and an empty-thinking assistant prefill. This is
+  no-think-requested, not a guarantee that the provider emits no reasoning
+- Recovery boundary: truncated content is not replayed; the recovery consumes
+  the sole second-call allowance and can never lead to a third logical call
 - Other inference models: none; no second model is used as a router, judge,
   verifier or fallback
 - Fine-tuning: none; no paid training run or checkpoint has been created
@@ -59,6 +69,13 @@ as correctness evidence.
 - Use of the public 400 golden workbooks for training or inference: none
 
 One environment variable is required at inference time: `TINKER_API_KEY`. It is passed at container runtime and is not stored in the repository or image.
+
+For completed but invalid plans, the sole second call is instead an ordinary
+semantic repair at the route's normal budget and with reasoning requested. A
+sheet truncation, a truncation during an ordinary repair or a truncated cell
+recovery falls back without another logical call. Each logical call retains its
+separate bounded transport-retry policy. Captured response content is retained
+in traces after secret redaction.
 
 The optional paid SFT pilot is outside the current inference claim. It requires
 all four conditions `--execute`, `EXACTSOURCE_ALLOW_PAID_TRAINING=YES`, a
@@ -101,7 +118,9 @@ The final run writes schema-version-2 `run_metrics.json` atomically after
 validating all task artefacts. It reports batch-execution wall time, task
 success/failure totals, logical model calls, provider attempts, provider and plan
 status counts, semantic repairs, transport retries, stage timings and
-prompt/response character counts. Per-task latency evidence preserves timings for
+prompt/response character counts. Semantic repairs retain a compatibility total
+and are split into ordinary repairs, max-token recoveries and an explicit
+other-or-unknown bucket. Per-task latency evidence preserves timings for
 failures that correctly have no model trace. Latency and character distributions
 record known and unknown counts, sum, minimum, exact median, nearest-rank p95 and
 maximum.

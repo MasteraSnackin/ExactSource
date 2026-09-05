@@ -252,6 +252,11 @@ def test_metrics_v2_separates_provider_plan_and_task_telemetry(tmp_path: Path) -
             "parse_rejected": 1,
         },
         "semantic_repairs": 1,
+        "semantic_repair_counts": {
+            "ordinary": 0,
+            "max_tokens_recovery": 0,
+            "other_or_unknown": 1,
+        },
         "semantic_attempt_unknown_calls": 0,
         "transport_retries": 1,
     }
@@ -346,3 +351,117 @@ def test_metrics_do_not_recover_task_latency_from_a_nonterminal_record(tmp_path:
 
     assert metrics["latency_ms"]["task"]["by_task"] == {"one": None}
     assert metrics["latency_ms"]["task"]["all"]["unknown_count"] == 1
+
+
+def test_metrics_classify_an_ordinary_semantic_repair(tmp_path: Path) -> None:
+    layout = prepare_output(tmp_path)
+    trace = TraceRecorder("ordinary")
+    trace.record(
+        model="fixed",
+        semantic_attempt=1,
+        semantic_repair=False,
+        status="plan_rejected",
+    )
+    trace.record(
+        model="fixed",
+        semantic_attempt=2,
+        semantic_repair=True,
+        status="success",
+    )
+    write_trace(layout, "ordinary", trace)
+
+    metrics = build_run_metrics(layout, [_prediction("ordinary")], run_wall_time_ms=0)
+
+    assert metrics["reliability"]["semantic_repairs"] == 1
+    assert metrics["reliability"]["semantic_repair_counts"] == {
+        "ordinary": 1,
+        "max_tokens_recovery": 0,
+        "other_or_unknown": 0,
+    }
+
+
+def test_metrics_classify_one_truncation_recovery_across_transport_retries(
+    tmp_path: Path,
+) -> None:
+    layout = prepare_output(tmp_path)
+    trace = TraceRecorder("truncation")
+    trace.record(
+        model="fixed",
+        semantic_attempt=1,
+        semantic_repair=False,
+        status="error",
+    )
+    trace.record(
+        model="fixed",
+        semantic_attempt=2,
+        semantic_repair=True,
+        recovery_reason="max_tokens",
+        status="retry",
+    )
+    trace.record(
+        model="fixed",
+        semantic_attempt=2,
+        semantic_repair=True,
+        recovery_reason="max_tokens",
+        status="success",
+    )
+    write_trace(layout, "truncation", trace)
+
+    metrics = build_run_metrics(layout, [_prediction("truncation")], run_wall_time_ms=0)
+
+    assert metrics["model"] == {
+        "calls": 2,
+        "attempts": 3,
+        "attempt_status_counts": {"error": 1, "retry": 1, "success": 1},
+    }
+    assert metrics["reliability"]["semantic_repairs"] == 1
+    assert metrics["reliability"]["semantic_repair_counts"] == {
+        "ordinary": 0,
+        "max_tokens_recovery": 1,
+        "other_or_unknown": 0,
+    }
+    assert metrics["reliability"]["transport_retries"] == 1
+
+
+def test_metrics_classify_mixed_semantic_repairs_and_keep_an_other_bucket(
+    tmp_path: Path,
+) -> None:
+    layout = prepare_output(tmp_path)
+
+    ordinary = TraceRecorder("ordinary")
+    ordinary.record(model="fixed", semantic_attempt=1, semantic_repair=False)
+    ordinary.record(model="fixed", semantic_attempt=2, semantic_repair=True)
+    write_trace(layout, "ordinary", ordinary)
+
+    truncation = TraceRecorder("truncation")
+    truncation.record(model="fixed", semantic_attempt=1, semantic_repair=False)
+    truncation.record(
+        model="fixed",
+        semantic_attempt=2,
+        semantic_repair=True,
+        recovery_reason="max_tokens",
+    )
+    write_trace(layout, "truncation", truncation)
+
+    other = TraceRecorder("other")
+    other.record(model="fixed", semantic_attempt=1, semantic_repair=False)
+    other.record(
+        model="fixed",
+        semantic_attempt=2,
+        semantic_repair=True,
+        recovery_reason="provider_filter",
+    )
+    write_trace(layout, "other", other)
+
+    metrics = build_run_metrics(
+        layout,
+        [_prediction("ordinary"), _prediction("truncation"), _prediction("other")],
+        run_wall_time_ms=0,
+    )
+
+    assert metrics["reliability"]["semantic_repairs"] == 3
+    assert metrics["reliability"]["semantic_repair_counts"] == {
+        "ordinary": 1,
+        "max_tokens_recovery": 1,
+        "other_or_unknown": 1,
+    }

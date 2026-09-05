@@ -81,32 +81,65 @@ workbooks, then recalculates and scores them.
 ```mermaid
 flowchart TD
     accTitle: ExactSource task pipeline
-    accDescr: A task normally moves from a temporary workbook copy through context construction, a model request, typed plan validation, route execution and structural checks. A rejected plan, execution or candidate check may use one semantic repair. A provider call that fails under its retry policy, or an exhausted repair, publishes the initial workbook with an error status. Every task result then enters final batch validation.
+    accDescr: A task moves from a temporary workbook and bounded context to a route-specific initial request. Cell requests use a 16,000-token cap and sheet requests use 32,000, both with reasoning requested. A completed but rejected plan may use the sole second call as an ordinary repair at the same route policy. Only an initial cell request stopped at max_tokens may instead use that second call as a fresh 32,000-token no-think-requested recovery. No path permits a third logical call. Accepted candidates are published; exhausted paths publish the initial workbook with an error status.
 
     Prepare["TaskSpec: copy initial workbook<br/>and build bounded context"]
-    Attempt["Request and parse a SolvePlan,<br/>then run the selected route"]
-    Check{"Candidate readable and<br/>required answer sheets present?"}
-    Check -->|Yes| Publish["Publish candidate workbook<br/>with ok status"]
+    Route{"Task level?"}
+    Cell["Cell initial request<br/>16k, reasoning=true"]
+    Sheet["Sheet initial request<br/>32k, reasoning=true"]
+    Validate["Parse and run the plan,<br/>then check the candidate"]
+    Accepted{"Accepted?"}
+    Second{"Sole second-call<br/>allowance available?"}
+    Repair["Ordinary semantic repair<br/>same route cap, reasoning=true<br/>with deterministic error"]
+    Recovery["Fresh cell recovery: 32k,<br/>reasoning=false, /no_think and<br/>empty-thinking prefill; no replay"]
+    FinalValidate["Parse and run the second plan,<br/>then check the candidate"]
+    Publish["Publish candidate workbook<br/>with ok status"]
+    Fallback["Publish the initial workbook copy<br/>with error status"]
 
-    Prepare --> Attempt
-    Attempt --> Check
-    Attempt -.->|"plan or execution rejected"| Repair{"One semantic repair<br/>available?"}
-    Check -->|No| Repair
-    Repair -->|"Yes: add deterministic error"| Attempt
-    Repair -->|No| Fallback["Publish the initial workbook copy<br/>with error status"]
-    Attempt -.->|"provider call fails under its retry policy"| Fallback
+    Prepare --> Route
+    Route -->|Cell| Cell
+    Route -->|Sheet| Sheet
+    Cell -->|"complete response"| Validate
+    Sheet -->|"complete response"| Validate
+    Cell -.->|"initial max_tokens"| Recovery
+    Sheet -.->|"max_tokens or exhausted provider retries"| Fallback
+    Validate --> Accepted
+    Accepted -->|Yes| Publish
+    Accepted -->|No| Second
+    Second -->|Yes| Repair
+    Second -->|No| Fallback
+    Repair --> FinalValidate
+    Recovery --> FinalValidate
+    FinalValidate -->|Accepted| Publish
+    FinalValidate -->|"rejected, truncated or provider failure"| Fallback
+    Cell -.->|"exhausted provider retries"| Fallback
     Publish --> TaskResult["Write task trace and<br/>return task result"]
     Fallback --> TaskResult
     TaskResult --> Batch["After all tasks: write predictions,<br/>validate outputs and write metrics"]
 ```
 
 Cell-level tasks can only use declarative operations. A sheet-level task may use
-either route. All edits happen on a temporary working copy. The first parse,
-execution or candidate check failure can trigger one semantic repair request
-with deterministic error feedback. Each model request follows its own transport
-retry policy; if the provider call still fails, the task goes straight to the
-fallback. If a task still fails, the runner discards the edited workbook and
-writes the initial workbook to that task's output path with an error status.
+either route. All edits happen on a temporary working copy. Cell initial requests
+and ordinary cell semantic repairs use a 16,000-token cap with reasoning
+requested. Sheet initial requests and ordinary sheet semantic repairs use a
+32,000-token cap with reasoning requested.
+
+The first completed response rejected during parsing, execution or candidate
+checking can use the sole second logical call as an ordinary semantic repair with
+deterministic error feedback. Only an initial cell request stopped at
+`max_tokens` uses that allowance differently: the runner makes a fresh
+32,000-token request from the original messages, disables Boolean reasoning,
+appends `/no_think` and adds an empty-thinking assistant prefill. It never replays
+the truncated content. These controls make the recovery answer-biased, but do
+not guarantee that the provider emits no reasoning. The recovery is the second
+and final logical call; a rejected or truncated recovery never permits a third.
+A sheet truncation and a truncation during an ordinary repair also fall back
+without another logical call.
+
+Each logical call follows its own transport-retry policy; if the provider call
+still fails, the task goes straight to the fallback. If a task still fails, the
+runner discards the edited workbook and writes the initial workbook to that
+task's output path with an error status.
 
 ## Components
 
@@ -119,7 +152,7 @@ writes the initial workbook to that task's output path with an error status.
 | Tinker adapter | `src/exactsource/model.py` | Send the fixed request, decode server-sent events, apply transport retries and return model text plus usage evidence | HTTPS to Tinker, with one trace record per provider attempt |
 | Declarative executor | `src/exactsource/plans.py`, `src/exactsource/formula_safety.py` | Check destination ranges and resource limits, then apply typed cell and range operations | Reads and writes the task's temporary workbook |
 | Python transform runner | `src/exactsource/sandbox.py`, `src/exactsource/formula_safety.py` | Screen model-written code and run `transform(wb)` in a restricted child process | Receives fixed staged workbook paths and a stripped environment |
-| Task coordinator | `src/exactsource/runner.py` | Run tasks concurrently, isolate failures, allow at most one semantic repair and preserve dataset order in final predictions | Coordinates the model, both execution routes and task artefacts |
+| Task coordinator | `src/exactsource/runner.py` | Run tasks concurrently, isolate failures, apply route-aware generation limits and allow at most two logical model calls | Coordinates ordinary repairs, the initial-cell truncation recovery, both execution routes and task artefacts |
 | Artefact and metric layer | `src/exactsource/artifacts.py`, `src/exactsource/metrics.py` | Write workbooks and JSONL files atomically, validate the output contract and derive run metrics | Owns `predictions.jsonl`, `outputs/`, `traces/`, `run_metrics.json` and `run.log` |
 | Official evaluator | Organiser `research/evaluate.py` | Recalculate workbooks with LibreOffice and compute benchmark metrics | Reads ExactSource predictions and writes `results.json` outside the inference runtime |
 
@@ -138,11 +171,17 @@ writes the initial workbook to that task's output path with an error status.
    the other sections share the remaining budget.
 5. The prompt builder combines the task metadata, instruction, bounded workbook
    context and the schema allowed for that task type.
-6. The Tinker adapter streams a response from `Qwen/Qwen3.8-27B`. Each provider
-   attempt becomes one trace record, including retryable failures.
-7. Pydantic parses the response as a `SolvePlan`. A rejected plan may receive one
-   repair call containing the deterministic parse or apply error, but no golden
-   feedback.
+6. The Tinker adapter streams a response from `Qwen/Qwen3.8-27B`. An initial cell
+   request uses 16,000 tokens; an initial sheet request uses 32,000. Both request
+   reasoning. Each provider attempt becomes one trace record, including retryable
+   failures.
+7. Pydantic parses the response as a `SolvePlan`. A completed but rejected plan
+   may use the sole second logical call for a deterministic-error repair at the
+   same route budget with reasoning requested. Only an initial cell request
+   stopped at `max_tokens` uses the second call for a fresh 32,000-token,
+   no-think-requested recovery. It disables Boolean reasoning, adds `/no_think`
+   and an empty-thinking prefill, and does not replay the truncated response. No
+   outcome from either kind of second call can trigger a third.
 8. The selected executor edits a candidate workbook. Formula capability checks
    apply to formulas introduced or changed by the plan.
 9. The runner reopens the candidate and checks that every declared answer sheet
@@ -258,8 +297,13 @@ Tinker.
   it writes predictions, regardless of completion order.
 - Model responses are streamed with fixed connection, read, write and pool
   timeouts.
-- A provider call may retry twice after the first attempt. A parsed or applied
-  plan may receive one semantic repair.
+- Each logical model call may retry transport twice after the first provider
+  attempt.
+- A task can make at most two logical model calls. A completed but rejected plan
+  may use the second as an ordinary same-policy repair. Only an initial cell
+  `max_tokens` truncation may use it instead as a fresh 32,000-token,
+  no-think-requested recovery without partial-response replay. The recovery or
+  repair can never trigger a third call.
 - Each task uses separate temporary files and a separate trace recorder. Mutable
   usage counters are not shared between workers.
 - Candidate workbooks, predictions, traces and metrics are written to temporary
@@ -287,9 +331,11 @@ Tinker.
 - Formula checks reject visible references to external workbooks, legacy
   integrations or external services. They also reject malformed structural
   delimiters and worksheet references that can be parsed confidently and point
-  to absent sheets. The checks reject generated `HYPERLINK` and `IMAGE` formulas.
-  They do not evaluate function availability, function arity, dynamic targets or
-  calculated results. `copy_range` rejects OOXML what-if data-table formulas
+  to absent sheets. A narrow deterministic check rejects a literal `VLOOKUP` or
+  `HLOOKUP` return index that is provably outside a bounded static A1 table
+  range. The checks reject generated `HYPERLINK` and `IMAGE` formulas. They do
+  not otherwise evaluate function availability, function arity, dynamic targets
+  or calculated results. `copy_range` rejects OOXML what-if data-table formulas
   because it cannot relocate them safely.
 - The capability check applies only to new or changed formulas. It does not
   re-screen formulas that remain unchanged.
@@ -315,7 +361,8 @@ Each run produces four records:
   that fails before any provider call has an empty trace.
 - `run_metrics.json` schema version 2 summarises outcomes, logical calls,
   provider attempts, retries, repairs, character volumes, token usage and
-  latency.
+  latency. It preserves a total repair count while splitting ordinary repairs,
+  max-token recoveries and other or unknown repair types.
 
 Metrics distinguish known values from unavailable measurements. Token totals
 retain `known_sum`, `known_attempts` and `unknown_attempts`. Optional Tinker cache
@@ -339,6 +386,8 @@ record.
 | --- | --- | --- |
 | Invalid dataset, unsafe path or duplicate task ID | Abort the run with a redacted error | The input contract could not be established |
 | Tinker timeout or exhausted transport retries | Record available attempts, write the initial workbook and continue | The task did not produce an accepted model plan |
+| Initial cell request stops at `max_tokens` | Spend the sole second-call allowance on a fresh 32,000-token, no-think-requested recovery without replaying the truncated response | The first response did not finish; provider compliance with the no-think request is not guaranteed |
+| Sheet request, ordinary repair or cell recovery stops at `max_tokens` | Record the truncation, publish the fallback and continue without another logical call | The permitted generation path was exhausted |
 | Invalid JSON or rejected plan after one repair | Record the rejection, publish the fallback and continue | The response did not meet the typed execution contract |
 | Executor error, unsafe formula or invalid candidate workbook | May make one repair request. After exhaustion, discard the edited workbook, write the initial workbook and continue | The edited workbook failed a deterministic runtime check |
 | Structurally valid but logically wrong workbook | Publish with `ok` status | The evaluator may still mark the workbook incorrect |
@@ -352,6 +401,7 @@ evaluation or manual inspection.
 | Decision | Benefit | Cost or limit |
 | --- | --- | --- |
 | Fixed model and inference settings | Makes judge runs easier to reproduce and satisfies the model restriction | Prevents runtime model selection and adaptive routing through another model |
+| Route-aware generation budgets with one bounded cell-truncation recovery | Gives larger sheet plans and one incomplete cell plan room to finish while keeping the call count bounded | A recovery can consume 32,000 tokens and its no-think controls may not suppress provider reasoning |
 | Typed plan instead of prose or a full cell dump | Gives the runtime a small, inspectable execution contract | Valid spreadsheet logic can still be expressed incorrectly by the model |
 | Operations-only schema for cell tasks | Constrains writes to answer ranges and makes formula fills compact | Cannot express every possible workbook change |
 | Optional Python route for sheet tasks | Handles procedural edits without enumerating a large cell patch | Has a broader mutation surface and weaker preservation guarantees |

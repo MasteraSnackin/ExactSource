@@ -251,6 +251,7 @@ def build_run_metrics(
     logical_call_latency = _Distribution()
     logical_latency_by_plan_status: dict[str, _Distribution] = {}
     semantic_repairs = 0
+    semantic_repair_counts: Counter[str] = Counter()
     unknown_semantic_attempt_calls = 0
     for call_key, records in call_records.items():
         terminal, location = records[-1]
@@ -271,6 +272,13 @@ def build_run_metrics(
         if call_key[1] == "semantic":
             if call_key[2] > 1:
                 semantic_repairs += 1
+                recovery_reason = terminal.get("recovery_reason")
+                if recovery_reason == "max_tokens":
+                    semantic_repair_counts["max_tokens_recovery"] += 1
+                elif recovery_reason is None and terminal.get("semantic_repair") is True:
+                    semantic_repair_counts["ordinary"] += 1
+                else:
+                    semantic_repair_counts["other_or_unknown"] += 1
         else:
             unknown_semantic_attempt_calls += 1
 
@@ -346,6 +354,14 @@ def build_run_metrics(
             "provider_status_counts": dict(sorted(provider_statuses.items())),
             "plan_status_counts": dict(sorted(plan_statuses.items())),
             "semantic_repairs": semantic_repairs,
+            "semantic_repair_counts": {
+                name: semantic_repair_counts[name]
+                for name in (
+                    "ordinary",
+                    "max_tokens_recovery",
+                    "other_or_unknown",
+                )
+            },
             "semantic_attempt_unknown_calls": unknown_semantic_attempt_calls,
             "transport_retries": transport_retries,
         },
