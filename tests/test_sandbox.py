@@ -129,6 +129,25 @@ def transform(wb):
     assert not destination.exists()
 
 
+def test_python_transform_rejects_literal_lookup_index_outside_static_range(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "source.xlsx"
+    destination = tmp_path / "result.xlsx"
+    _workbook(source)
+    code = """\
+def transform(wb):
+    wb["Sheet1"]["B2"] = "=VLOOKUP(A2,A2:A4,2,FALSE)"
+"""
+
+    with pytest.raises(SandboxExecutionError) as caught:
+        run_transform(code, source, destination, timeout=10)
+
+    assert "literal lookup index outside static range" in str(caught.value)
+    assert "VLOOKUP" not in str(caught.value)
+    assert not destination.exists()
+
+
 def test_python_transform_preserves_unchanged_preexisting_external_formula(
     tmp_path: Path,
 ) -> None:

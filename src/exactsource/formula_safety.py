@@ -24,6 +24,8 @@ import re
 from collections.abc import Mapping, Sequence
 from typing import TypeAlias
 
+from openpyxl.formula.tokenizer import Token, Tokenizer, TokenizerError
+from openpyxl.utils.cell import column_index_from_string
 from openpyxl.worksheet.formula import ArrayFormula, DataTableFormula
 
 FormulaCell: TypeAlias = tuple[str, str]
@@ -75,8 +77,24 @@ _EXPLICIT_SHEET_CELL_RE = re.compile(
     r"\s*!\s*\$?[A-Za-z]{1,3}\$?[1-9][0-9]*",
     flags=re.IGNORECASE,
 )
+_STATIC_A1_RANGE_RE = re.compile(
+    r"^(?:"
+    r"(?:'(?:[^'\[\]\\/:?*\r\n]|'')+'|[A-Za-z_\\][A-Za-z0-9_.]*)!"
+    r")?"
+    r"\$?(?P<start_column>[A-Za-z]{1,3})\$?(?P<start_row>[1-9][0-9]*)"
+    r"(?:"
+    r":\$?(?P<end_column>[A-Za-z]{1,3})\$?(?P<end_row>[1-9][0-9]*)"
+    r")?$"
+)
+_LITERAL_INTEGER_RE = re.compile(r"^[0-9]+$")
+_LOOKUP_FUNCTION_RE = re.compile(
+    r"^@?(?:(?:_xlfn|_xlws)\.)?(VLOOKUP|HLOOKUP)$",
+    flags=re.IGNORECASE,
+)
 _OPENING_DELIMITERS = {"(": ")", "[": "]", "{": "}"}
 _CLOSING_DELIMITERS = frozenset(_OPENING_DELIMITERS.values())
+_EXCEL_MAX_COLUMN = 16_384
+_EXCEL_MAX_ROW = 1_048_576
 
 
 class FormulaSafetyError(ValueError):
@@ -250,17 +268,188 @@ def validate_formula_integrity(
 ) -> None:
     """Apply conservative safety, delimiter and explicit-reference checks.
 
-    Function names, arity, operators and calculated results remain outside this
-    static contract because Excel permits names, UDFs and evolving function sets.
-    Those require engine recalculation rather than an unsound allow-list.
+    Function names, arity, operators and calculated results generally remain
+    outside this static contract because Excel permits names, UDFs and evolving
+    function sets. The one semantic invariant checked here is a provably invalid
+    literal VLOOKUP or HLOOKUP index against a bounded static A1 range. Broader
+    semantics require engine recalculation rather than an unsound allow-list.
     """
 
     validate_formula_safety(formula)
     if not isinstance(formula, str) or not formula.startswith("="):
         return
     _validate_formula_delimiters(formula)
+    _validate_literal_lookup_bounds(formula)
     if sheetnames is not None:
         _validate_explicit_sheet_references(formula, sheetnames)
+
+
+def _trim_token_whitespace(tokens: list[Token]) -> list[Token]:
+    """Remove only whitespace surrounding a token sequence.
+
+    Whitespace between range operands is Excel's intersection operator, so it
+    must remain visible to the conservative argument checks below.
+    """
+
+    start = 0
+    end = len(tokens)
+    while start < end and tokens[start].type == Token.WSPACE:
+        start += 1
+    while end > start and tokens[end - 1].type == Token.WSPACE:
+        end -= 1
+    return tokens[start:end]
+
+
+def _top_level_lookup_arguments(formula: str) -> tuple[str, list[list[Token]]] | None:
+    """Return arguments for a whole top-level VLOOKUP or HLOOKUP call.
+
+    The tokenizer identifies nested functions, parentheses and arrays. Calls
+    wrapped in another expression, followed by an operator, or shaped in a way
+    the tokenizer cannot confidently interpret are deliberately ignored.
+    """
+
+    try:
+        # Leading whitespace after ``=`` has no left-hand range with which to
+        # form an intersection, so it is safe to normalise before tokenising.
+        token_formula = f"={formula[1:].lstrip()}"
+        tokens = _trim_token_whitespace(list(Tokenizer(token_formula).items))
+    except (IndexError, TokenizerError):
+        return None
+    if len(tokens) < 2:
+        return None
+
+    if tokens[0].type == Token.OP_PRE and tokens[0].value == "+":
+        tokens = _trim_token_whitespace(tokens[1:])
+    if len(tokens) < 2:
+        return None
+
+    opening = tokens[0]
+    if opening.type != Token.FUNC or opening.subtype != Token.OPEN:
+        return None
+    function_match = _LOOKUP_FUNCTION_RE.fullmatch(opening.value[:-1])
+    if function_match is None:
+        return None
+    function_name = function_match.group(1).upper()
+
+    arguments: list[list[Token]] = [[]]
+    depth = 1
+    closing_index: int | None = None
+    for index, token in enumerate(tokens[1:], start=1):
+        if token.subtype == Token.OPEN and token.type in {Token.FUNC, Token.PAREN, Token.ARRAY}:
+            depth += 1
+        elif token.subtype == Token.CLOSE and token.type in {Token.FUNC, Token.PAREN, Token.ARRAY}:
+            depth -= 1
+            if depth == 0:
+                closing_index = index
+                break
+        if token.type == Token.SEP and token.subtype == Token.ARG and depth == 1:
+            arguments.append([])
+        else:
+            arguments[-1].append(token)
+
+    if closing_index != len(tokens) - 1 or len(arguments) not in {3, 4}:
+        return None
+    return function_name, arguments
+
+
+def _static_a1_range_dimensions(tokens: list[Token]) -> tuple[int, int] | None:
+    """Return width and height for one unambiguous, bounded A1 reference."""
+
+    tokens = _trim_token_whitespace(tokens)
+    if len(tokens) != 1:
+        return None
+    token = tokens[0]
+    if token.type != Token.OPERAND or token.subtype != Token.RANGE:
+        return None
+    match = _STATIC_A1_RANGE_RE.fullmatch(token.value)
+    if match is None:
+        return None
+
+    try:
+        start_column = column_index_from_string(match.group("start_column"))
+        end_column_text = match.group("end_column") or match.group("start_column")
+        end_column = column_index_from_string(end_column_text)
+    except (TypeError, ValueError):
+        return None
+
+    start_row = _bounded_excel_row(match.group("start_row"))
+    end_row = _bounded_excel_row(match.group("end_row") or match.group("start_row"))
+    if start_row is None or end_row is None:
+        return None
+    if (
+        start_column > _EXCEL_MAX_COLUMN
+        or end_column > _EXCEL_MAX_COLUMN
+        or end_column < start_column
+        or end_row < start_row
+    ):
+        return None
+    return end_column - start_column + 1, end_row - start_row + 1
+
+
+def _bounded_excel_row(value: str) -> int | None:
+    """Parse one row number without exposing or converting oversized text."""
+
+    normalized = value.lstrip("0") or "0"
+    if len(normalized) > len(str(_EXCEL_MAX_ROW)):
+        return None
+    try:
+        row = int(normalized)
+    except (TypeError, ValueError):
+        return None
+    return row if 1 <= row <= _EXCEL_MAX_ROW else None
+
+
+def _literal_integer(tokens: list[Token]) -> int | None:
+    """Return a lexically literal integer, including one unary sign."""
+
+    tokens = [token for token in tokens if token.type != Token.WSPACE]
+    sign = 1
+    if len(tokens) == 2:
+        prefix, number = tokens
+        if prefix.type != Token.OP_PRE or prefix.value not in {"+", "-"}:
+            return None
+        sign = -1 if prefix.value == "-" else 1
+    elif len(tokens) == 1:
+        number = tokens[0]
+    else:
+        return None
+
+    value = number.value
+    if (
+        number.type != Token.OPERAND
+        or number.subtype != Token.NUMBER
+        or _LITERAL_INTEGER_RE.fullmatch(value) is None
+    ):
+        return None
+    value = value.lstrip("0") or "0"
+    if len(value) > len(str(_EXCEL_MAX_ROW)):
+        return sign * (_EXCEL_MAX_ROW + 1)
+    try:
+        return sign * int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _validate_literal_lookup_bounds(formula: str) -> None:
+    """Reject a provably invalid literal VLOOKUP/HLOOKUP index.
+
+    Only a whole top-level call with a static A1 table reference and lexical
+    integer index is considered. Named ranges, structured references, dynamic
+    arrays, calculated arguments, unions and nested calls remain untouched.
+    """
+
+    parsed = _top_level_lookup_arguments(formula)
+    if parsed is None:
+        return
+    function_name, arguments = parsed
+    dimensions = _static_a1_range_dimensions(arguments[1])
+    index = _literal_integer(arguments[2])
+    if dimensions is None or index is None:
+        return
+    width, height = dimensions
+    limit = width if function_name == "VLOOKUP" else height
+    if index < 1 or index > limit:
+        raise FormulaSafetyError("literal lookup index outside static range")
 
 
 def _function_arguments(formula: str, masked: str, opening: int) -> str:

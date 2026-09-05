@@ -92,6 +92,105 @@ def test_formula_integrity_rejects_confident_missing_sheet_reference(formula: st
 
 @pytest.mark.parametrize(
     "formula",
+    [
+        "=VLOOKUP(A2,B2:D20,3,FALSE)",
+        "=HLOOKUP(A2,B2:D6,5,FALSE)",
+        "=VLOOKUP(A2,$B$2:$D$20,1,FALSE)",
+        "=VLOOKUP(A2,Data!B2:D20,3,FALSE)",
+        "=HLOOKUP(A2,'Reference Data'!$B$2:$D$6,5,FALSE)",
+        "=+VLOOKUP(A2,B2:D20,3,FALSE)",
+        "=@HLOOKUP(A2,B2:D6,5,FALSE)",
+        "=_xlfn.VLOOKUP(A2,B2:D20,3,FALSE)",
+        "=_xlws.HLOOKUP(A2,B2:D6,5,FALSE)",
+        "=+@_xlfn.VLOOKUP(A2,B2:D20,3,FALSE)",
+    ],
+)
+def test_formula_integrity_accepts_literal_lookup_index_within_static_range(
+    formula: str,
+) -> None:
+    validate_formula_integrity(
+        formula,
+        sheetnames=("Data", "Reference Data"),
+    )
+
+
+@pytest.mark.parametrize(
+    "formula",
+    [
+        "=VLOOKUP(A2,B2:D20,4,FALSE)",
+        "=  vlookup(A2,B2:D20,4,FALSE)",
+        "= + VLOOKUP(A2,B2:D20,4,FALSE)",
+        "=@VLOOKUP(A2,B2:D20,4,FALSE)",
+        "=_xlfn.VLOOKUP(A2,B2:D20,4,FALSE)",
+        "=_xlws.HLOOKUP(A2,B2:D6,6,FALSE)",
+        "=+@_xlws.HLOOKUP(A2,B2:D6,6,FALSE)",
+        "=VLOOKUP(A2,$B$2:$D$20,+4,FALSE)",
+        "=VLOOKUP(A2,Data!B2:D20,0,FALSE)",
+        "=VLOOKUP(A2,'Reference Data'!$B$2:$D$20,-1,FALSE)",
+        "=HLOOKUP(A2,B2:D6,6,FALSE)",
+        "=HLOOKUP(A2,'Reference Data'!$B$2:$D$6,000,FALSE)",
+        "=VLOOKUP(A2,B2,2,FALSE)",
+        f"=VLOOKUP(A2,B2:D20,{'9' * 5000},FALSE)",
+    ],
+)
+def test_formula_integrity_rejects_literal_lookup_index_outside_static_range(
+    formula: str,
+) -> None:
+    with pytest.raises(FormulaSafetyError) as caught:
+        validate_formula_integrity(
+            formula,
+            sheetnames=("Data", "Reference Data"),
+        )
+
+    assert caught.value.category == "literal lookup index outside static range"
+    assert str(caught.value) == (
+        "formula rejected: literal lookup index outside static range is not allowed"
+    )
+    assert "Reference Data" not in str(caught.value)
+
+
+@pytest.mark.parametrize(
+    "formula",
+    [
+        "=IFERROR(VLOOKUP(A2,B2:D20,4,FALSE),0)",
+        "=IFERROR(+@_xlfn.VLOOKUP(A2,B2:D20,4,FALSE),0)",
+        "=VLOOKUP(A2,B2:D20,4,FALSE)+0",
+        "=+VLOOKUP(A2,B2:D20,4,FALSE)+0",
+        "=-VLOOKUP(A2,B2:D20,4,FALSE)",
+        "=++VLOOKUP(A2,B2:D20,4,FALSE)",
+        "=VLOOKUP(A2,LookupTable,4,FALSE)",
+        "=VLOOKUP(A2,Table1[[#Data],[Key]:[Value]],4,FALSE)",
+        "=VLOOKUP(A2,INDIRECT(F2),4,FALSE)",
+        "=VLOOKUP(A2,CHOOSE({1,2},B:B,D:D),4,FALSE)",
+        "=VLOOKUP(A2,(B2:D20),4,FALSE)",
+        "=VLOOKUP(A2,B2:D20,COLUMNS(B2:E2),FALSE)",
+        "=VLOOKUP(A2,B2:D20,1+3,FALSE)",
+        "=VLOOKUP(A2,B2:D20,(4),FALSE)",
+        "=VLOOKUP(A2,B2:D20,E2,FALSE)",
+        "=VLOOKUP(A2,B2:D20,4.0,FALSE)",
+        "=VLOOKUP(A2,B2:D20,4%,FALSE)",
+        "=VLOOKUP(A2,Sheet1:Sheet3!B2:D20,4,FALSE)",
+        "=VLOOKUP(A2,D20:B2,4,FALSE)",
+        "=VLOOKUP(A2,B:D,4,FALSE)",
+        "=XLOOKUP(A2,B2:B20,D2:D20)",
+    ],
+)
+def test_formula_integrity_leaves_ambiguous_or_non_top_level_lookups_untouched(
+    formula: str,
+) -> None:
+    validate_formula_integrity(formula)
+
+
+def test_formula_integrity_fails_soft_for_oversized_static_range_row() -> None:
+    oversized_row = "9" * 5000
+
+    validate_formula_integrity(
+        f"=VLOOKUP(A2,B2:D{oversized_row},4,FALSE)",
+    )
+
+
+@pytest.mark.parametrize(
+    "formula",
     ["=NO_SUCH_FUNCTION(A1)", "=#REF!", "=A1+"],
 )
 def test_formula_integrity_does_not_claim_to_validate_excel_semantics(formula: str) -> None:

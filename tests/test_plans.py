@@ -266,6 +266,61 @@ def test_formula_operation_rejects_confident_integrity_errors_without_leaking_na
     assert not destination.exists()
 
 
+def test_formula_operation_rejects_literal_lookup_index_outside_static_range(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "source.xlsx"
+    destination = tmp_path / "result.xlsx"
+    _source_workbook(source)
+    plan = SolvePlan(
+        route="operations",
+        summary="Repair a lookup formula.",
+        operations=[
+            SetFormula(
+                op="set_formula",
+                sheet="Output",
+                cell="B2",
+                formula="=VLOOKUP(A2,Data!A2:A4,2,FALSE)",
+            )
+        ],
+    )
+
+    with pytest.raises(PlanApplicationError) as caught:
+        apply_operations(plan, _task(source), source, destination)
+
+    assert "literal lookup index outside static range" in str(caught.value)
+    assert "VLOOKUP" not in str(caught.value)
+    assert "Data" not in str(caught.value)
+    assert not destination.exists()
+
+
+def test_formula_operation_preserves_valid_literal_lookup(tmp_path: Path) -> None:
+    source = tmp_path / "source.xlsx"
+    destination = tmp_path / "result.xlsx"
+    _source_workbook(source)
+    formula = "=VLOOKUP(A2,Data!A2:B4,2,FALSE)"
+    plan = SolvePlan(
+        route="operations",
+        summary="Write a bounded lookup formula.",
+        operations=[
+            SetFormula(
+                op="set_formula",
+                sheet="Output",
+                cell="B2",
+                formula=formula,
+            )
+        ],
+    )
+
+    apply_operations(plan, _task(source), source, destination)
+
+    workbook = load_workbook(destination, data_only=False)
+    try:
+        assert workbook["Output"]["B2"].value == formula
+    finally:
+        workbook.close()
+
+
 def test_formula_operation_preserves_modern_spill_syntax(tmp_path: Path) -> None:
     source = tmp_path / "source.xlsx"
     destination = tmp_path / "spill.xlsx"
