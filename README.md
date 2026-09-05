@@ -15,6 +15,7 @@ same operations or a restricted Python transform. Every model call uses
 
 - [Quick start](#quick-start)
 - [How it works](#how-it-works)
+- [Architecture](#architecture)
 - [Outputs and official score](#outputs-and-official-score)
 - [Known limits](#known-limits)
 
@@ -111,8 +112,14 @@ These checks establish the runtime's structural output contract. The organiser's
 evaluator separately recalculates the workbook and decides whether its contents
 are correct.
 
-Read [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for component boundaries,
-failure handling, data flow and design trade-offs.
+## Architecture
+
+For the technical design behind the overview above, read
+[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md). It documents the system
+boundaries, task pipeline, components, data flow, failure handling, concurrency,
+observability, security controls and design trade-offs. The solve path and the
+organiser's evaluator are kept separate so it is clear what ExactSource controls
+and what the benchmark scores.
 
 ## Outputs and official score
 
