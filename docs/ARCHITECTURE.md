@@ -192,9 +192,11 @@ The operations route supports:
 For this route, every destination rectangle must fit inside a declared answer
 range. Resource bounds are checked before workbook loading. After loading,
 destination scope is checked before any operation is applied. Each operation
-then validates its worksheets, coordinates and formulas before writing its
-cells. The plan may contain at most 128 operations, touch at most 250,000 cells
-in one operation and write at most 500,000 destination cells in total.
+then validates its worksheets and coordinates during application, and each
+formula is checked before that formula cell is written. Any later failure
+discards the whole temporary candidate. The plan may contain at most 128
+operations, touch at most 250,000 cells in one operation and write at most
+500,000 destination cells in total.
 
 ### Restricted Python transform
 
