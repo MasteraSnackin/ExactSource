@@ -1,0 +1,19 @@
+.DS_Store
+.env
+.env.*
+!.env.example
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.coverage
+htmlcov/
+build/
+dist/
+.ruff_cache/
+
+# Local inputs and scratch runs. Root submission artefacts such as results.json,
+# predictions.jsonl, outputs/ and traces/ are intentionally not ignored.
+data/
+scratch/

@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "observed_at_utc": "2026-09-05T11:50:40Z",
+  "endpoint": "https://tinker.thinkingmachines.dev/services/tinker-prod/anthropic/api/v1/messages",
+  "credential_recorded": false,
+  "requested_model": "Qwen/Qwen3.8-27B",
+  "returned_model": "Qwen/Qwen3.8-27B",
+  "findings": {
+    "authentication": "passed",
+    "plain_completion": "passed",
+    "production_max_tokens_32000": "passed_in_task_41691_smoke",
+    "top_level_boolean_reasoning_effort": "passed",
+    "output_config_named_effort": "rejected",
+    "required_tool_call_reasoning_enabled": "provider_502_no_tool_call",
+    "required_tool_call_reasoning_disabled": "provider_502_no_tool_call",
+    "plain_json_requires_reasoning_delimiter_extraction": true
+  },
+  "implementation_decision_at_probe": "Use plain completion, retain raw response, strip through the final </think> delimiter for strict local SolvePlan validation, and allow one bounded repair call.",
+  "superseded_by": "tinker_stream_probe.json"
+}

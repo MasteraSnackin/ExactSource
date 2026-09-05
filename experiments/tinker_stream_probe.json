@@ -1,0 +1,56 @@
+{
+  "schema_version": 1,
+  "observed_at_utc": "2026-09-05T16:24:33Z",
+  "credential_recorded": false,
+  "requested_model": "Qwen/Qwen3.8-27B",
+  "tests": {
+    "native_sdk_session": {
+      "generation_requested": false,
+      "status": "blocked",
+      "http_status": 400,
+      "reason": "default_project_read_only"
+    },
+    "anthropic_compatible_stream": {
+      "generation_requested": true,
+      "status": "passed",
+      "http_status": 200,
+      "content_type": "text/event-stream",
+      "stop_reason": "end_turn",
+      "output_tokens": 30,
+      "latency_ms": 2084,
+      "response_recorded": false
+    },
+    "named_xhigh_effort": {
+      "generation_requested": false,
+      "status": "rejected",
+      "http_status": 400,
+      "reason": "exact_model_accepts_boolean_reasoning_control"
+    },
+    "spreadsheet_task_56563": {
+      "generation_requested": true,
+      "status": "passed",
+      "provider_attempts": 1,
+      "safe_fallback_used": false,
+      "stop_reason": "end_turn",
+      "output_tokens": 3826,
+      "latency_ms": 63529,
+      "formula_written": "=SUMPRODUCT(IF(ISNUMBER(C2:C13),C2:C13,0))",
+      "official_cells_correct": 1,
+      "official_cells_total": 1
+    },
+    "spreadsheet_task_51-12": {
+      "generation_requested": true,
+      "status": "passed",
+      "provider_attempts": 1,
+      "safe_fallback_used": false,
+      "stop_reason": "end_turn",
+      "output_tokens": 11573,
+      "latency_ms": 145668,
+      "route": "python",
+      "value_written": 4,
+      "official_cells_correct": 1,
+      "official_cells_total": 1
+    }
+  },
+  "conclusion": "The key and exact model work through the compatible streaming endpoint. Native SDK sampling needs an explicit writable Tinker project because the account default is read-only."
+}

@@ -1,0 +1,158 @@
+{
+  "cases": [
+    {
+      "actual": 6,
+      "expected": 6,
+      "formula": "=_xlfn.AGGREGATE(9,4,A2:A4)",
+      "function": "AGGREGATE",
+      "id": "aggregate",
+      "passed": true,
+      "stored_name": "_xlfn.AGGREGATE"
+    },
+    {
+      "actual": 20,
+      "expected": 20,
+      "formula": "=INDEX(_xlfn.CHOOSECOLS(A2:C2,2),1,1)",
+      "function": "CHOOSECOLS",
+      "id": "choosecols",
+      "passed": true,
+      "stored_name": "_xlfn.CHOOSECOLS"
+    },
+    {
+      "actual": "redblue",
+      "expected": "redblue",
+      "formula": "=_xlfn.CONCAT(A2:C2)",
+      "function": "CONCAT",
+      "id": "concat",
+      "passed": true,
+      "stored_name": "_xlfn.CONCAT"
+    },
+    {
+      "actual": 20,
+      "expected": 20,
+      "formula": "=INDEX(_xlfn.DROP(A2:A4,1),1)",
+      "function": "DROP",
+      "id": "drop",
+      "passed": true,
+      "stored_name": "_xlfn.DROP"
+    },
+    {
+      "actual": "one",
+      "expected": "one",
+      "formula": "=INDEX(_xlfn._xlws.FILTER(A2:A4,B2:B4=\"keep\"),1)",
+      "function": "FILTER",
+      "id": "filter",
+      "passed": true,
+      "stored_name": "_xlfn._xlws.FILTER"
+    },
+    {
+      "actual": "alpha",
+      "expected": "alpha",
+      "formula": "=_xlfn.FILTERXML(\"<root><v>alpha</v></root>\",\"//v\")",
+      "function": "FILTERXML",
+      "id": "filterxml",
+      "passed": true,
+      "stored_name": "_xlfn.FILTERXML"
+    },
+    {
+      "actual": 7,
+      "expected": 7,
+      "formula": "=_xlfn.IFNA(NA(),7)",
+      "function": "IFNA",
+      "id": "ifna",
+      "passed": true,
+      "stored_name": "_xlfn.IFNA"
+    },
+    {
+      "actual": 7,
+      "expected": 7,
+      "formula": "=_xlfn.LET(x,A2*2,x+1)",
+      "function": "LET",
+      "id": "let",
+      "passed": true,
+      "stored_name": "_xlfn.LET"
+    },
+    {
+      "actual": 9,
+      "expected": 9,
+      "formula": "=_xlfn.MAXIFS(A2:A4,B2:B4,\"yes\")",
+      "function": "MAXIFS",
+      "id": "maxifs",
+      "passed": true,
+      "stored_name": "_xlfn.MAXIFS"
+    },
+    {
+      "actual": 3,
+      "expected": 3,
+      "formula": "=_xlfn.MINIFS(A2:A4,B2:B4,\"yes\")",
+      "function": "MINIFS",
+      "id": "minifs",
+      "passed": true,
+      "stored_name": "_xlfn.MINIFS"
+    },
+    {
+      "actual": 1,
+      "expected": 1,
+      "formula": "=INDEX(_xlfn._xlws.SORT(A2:A4),1)",
+      "function": "SORT",
+      "id": "sort",
+      "passed": true,
+      "stored_name": "_xlfn._xlws.SORT"
+    },
+    {
+      "actual": "second",
+      "expected": "second",
+      "formula": "=INDEX(_xlfn.SORTBY(A2:A4,B2:B4,1),1)",
+      "function": "SORTBY",
+      "id": "sortby",
+      "passed": true,
+      "stored_name": "_xlfn.SORTBY"
+    },
+    {
+      "actual": "red-blue",
+      "expected": "red-blue",
+      "formula": "=_xlfn.TEXTJOIN(\"-\",TRUE,A2:C2)",
+      "function": "TEXTJOIN",
+      "id": "textjoin",
+      "passed": true,
+      "stored_name": "_xlfn.TEXTJOIN"
+    },
+    {
+      "actual": "blue",
+      "expected": "blue",
+      "formula": "=INDEX(_xlfn.TEXTSPLIT(A2,\",\"),1,2)",
+      "function": "TEXTSPLIT",
+      "id": "textsplit",
+      "passed": true,
+      "stored_name": "_xlfn.TEXTSPLIT"
+    },
+    {
+      "actual": "beta",
+      "expected": "beta",
+      "formula": "=INDEX(_xlfn.UNIQUE(A2:A5),2)",
+      "function": "UNIQUE",
+      "id": "unique",
+      "passed": true,
+      "stored_name": "_xlfn.UNIQUE"
+    },
+    {
+      "actual": 20,
+      "expected": 20,
+      "formula": "=_xlfn.XLOOKUP(\"b\",A2:A4,B2:B4)",
+      "function": "XLOOKUP",
+      "id": "xlookup",
+      "passed": true,
+      "stored_name": "_xlfn.XLOOKUP"
+    }
+  ],
+  "engine": {
+    "executable": "/Applications/LibreOffice.app/Contents/MacOS/soffice",
+    "version": "LibreOffice 26.8.0.3 bce0998afefdbc355585ca324285661a2170ba77"
+  },
+  "schema_version": 1,
+  "summary": {
+    "failed": 0,
+    "passed": 16,
+    "total": 16
+  }
+}

@@ -1,0 +1,8 @@
+# Allow-list the runtime build context. This keeps datasets, generated outputs,
+# VCS history, local environments and credentials out of image layers.
+*
+!pyproject.toml
+!uv.lock
+!README.md
+!src/
+!src/**

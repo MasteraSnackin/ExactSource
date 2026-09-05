@@ -1,0 +1,26 @@
+{
+  "schema_version": 1,
+  "observed_on_utc": "2026-09-05",
+  "credential_recorded": false,
+  "dataset_scope": "six development IDs only; hold-out not used",
+  "task_ids": [
+    "56563",
+    "7665",
+    "41420",
+    "51-12",
+    "13-1",
+    "191-40"
+  ],
+  "transport": "anthropic_compatible_non_streaming",
+  "configured_concurrency": 4,
+  "tasks_succeeded": 0,
+  "tasks_using_safe_fallback": 6,
+  "provider_attempts": 18,
+  "attempt_latency_ms": {
+    "minimum": 60029,
+    "maximum": 60141
+  },
+  "common_error": "Server disconnected without sending a response.",
+  "interpretation": "The repeated approximately 60-second boundary is consistent with an upstream silent-response timeout, but does not by itself identify which proxy or service closed the connection.",
+  "follow_up": "Replace the silent response with the provider's supported server-sent-events mode and rerun one development task before any wider benchmark run."
+}

@@ -1,0 +1,30 @@
+{
+  "schema_version": 1,
+  "observed_at_utc": "2026-09-05T18:40:36Z",
+  "purpose": "post-rotation credential and compatible-stream check",
+  "credential_recorded": false,
+  "prompt_recorded": false,
+  "response_recorded": false,
+  "requested_model": "Qwen/Qwen3.8-27B",
+  "request_limits": {
+    "max_output_tokens": 64,
+    "reasoning_effort": false,
+    "transport_retries": 0
+  },
+  "result": {
+    "status": "passed",
+    "provider_status": "success",
+    "http_status": 200,
+    "transport": "anthropic_sse",
+    "attempts": 1,
+    "message_complete": true,
+    "stop_reason": "end_turn",
+    "input_tokens": 0,
+    "output_tokens": 28,
+    "cache_creation_input_tokens": 0,
+    "cache_read_input_tokens": 0,
+    "latency_ms": 1455
+  },
+  "conclusion": "The replacement credential and exact model work through the compatible streaming endpoint.",
+  "limits": "This minimal non-training request verifies authentication and transport only; it is not production-prompt, accuracy, throughput or checkpoint evidence. Token counts are provider-reported."
+}

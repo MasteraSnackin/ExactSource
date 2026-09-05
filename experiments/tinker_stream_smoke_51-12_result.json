@@ -1,0 +1,23 @@
+{
+  "summary": {
+    "items": 1,
+    "graded": 1,
+    "missing": 0,
+    "errors": 0,
+    "pass_rate": 1.0,
+    "cell_accuracy": 1.0,
+    "pass_rate_cell_level": null,
+    "pass_rate_sheet_level": 1.0
+  },
+  "items": [
+    {
+      "status": "graded",
+      "cells": 1,
+      "correct": 1,
+      "pass": true,
+      "mismatches": [],
+      "id": "51-12",
+      "type": "Sheet-Level Manipulation"
+    }
+  ]
+}

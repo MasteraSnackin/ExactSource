@@ -1,0 +1,199 @@
+{
+  "schema_version": 1,
+  "cases": [
+    {
+      "id": "synthetic-sum-column-001",
+      "split": "train",
+      "description": "Write a total formula beneath a short numeric column.",
+      "instruction_type": "Cell-Level Manipulation",
+      "instruction": "In Data!B5, calculate the total of the amounts in B2:B4 with a formula.",
+      "answer_ranges": [{"sheet": "Data", "range": "B5"}],
+      "data_position": "Data!A1:B4",
+      "workbook": {
+        "sheets": [{"name": "Data", "cells": {"A1": "Asset", "B1": "Amount", "A2": "Alpha", "B2": 125, "A3": "Beta", "B3": 275, "A4": "Gamma", "B4": 100, "A5": "Total"}}]
+      },
+      "plan": {"route": "operations", "summary": "Total the amount column.", "operations": [{"op": "set_formula", "sheet": "Data", "cell": "B5", "formula": "=SUM(B2:B4)"}]},
+      "expectations": {"cells": {"Data!B5": "=SUM(B2:B4)"}, "calculated": {"Data!B5": 500}, "preserved": {"Data!A2": "Alpha", "Data!B3": 275}}
+    },
+    {
+      "id": "synthetic-nested-if-001",
+      "split": "train",
+      "description": "Classify a ratio with a nested conditional.",
+      "instruction_type": "Cell-Level Manipulation",
+      "instruction": "In Risk!D2, return High when C2 is at least 0.8, Medium when it is at least 0.5, and Low otherwise.",
+      "answer_ranges": [{"sheet": "Risk", "range": "D2"}],
+      "data_position": "Risk!A1:D2",
+      "workbook": {"sheets": [{"name": "Risk", "cells": {"A1": "Fund", "B1": "NAV", "C1": "Ratio", "D1": "Band", "A2": "Fund I", "B2": 900, "C2": 0.72}}]},
+      "plan": {"route": "operations", "summary": "Classify the risk ratio.", "operations": [{"op": "set_formula", "sheet": "Risk", "cell": "D2", "formula": "=IF(C2>=0.8,\"High\",IF(C2>=0.5,\"Medium\",\"Low\"))"}]},
+      "expectations": {"cells": {"Risk!D2": "=IF(C2>=0.8,\"High\",IF(C2>=0.5,\"Medium\",\"Low\"))"}, "calculated": {"Risk!D2": "Medium"}, "preserved": {"Risk!A2": "Fund I", "Risk!C2": 0.72}}
+    },
+    {
+      "id": "synthetic-index-match-001",
+      "split": "train",
+      "description": "Look up a value on another worksheet with INDEX and MATCH.",
+      "instruction_type": "Cell-Level Manipulation",
+      "instruction": "In Portfolio!B2, look up the asset ID from A2 on Reference and return its NAV. Return blank when no match exists.",
+      "answer_ranges": [{"sheet": "Portfolio", "range": "B2"}],
+      "data_position": "Portfolio!A1:B2,Reference!A1:B4",
+      "workbook": {"sheets": [{"name": "Portfolio", "cells": {"A1": "Asset ID", "B1": "NAV", "A2": "A-002"}}, {"name": "Reference", "cells": {"A1": "Asset ID", "B1": "NAV", "A2": "A-001", "B2": 1250000, "A3": "A-002", "B3": 875000, "A4": "A-003", "B4": 640000}}]},
+      "plan": {"route": "operations", "summary": "Look up the portfolio NAV.", "operations": [{"op": "set_formula", "sheet": "Portfolio", "cell": "B2", "formula": "=IFERROR(INDEX(Reference!$B:$B,MATCH(A2,Reference!$A:$A,0)),\"\")"}]},
+      "expectations": {"cells": {"Portfolio!B2": "=IFERROR(INDEX(Reference!$B:$B,MATCH(A2,Reference!$A:$A,0)),\"\")"}, "calculated": {"Portfolio!B2": 875000}, "preserved": {"Portfolio!A2": "A-002", "Reference!B3": 875000}}
+    },
+    {
+      "id": "synthetic-vlookup-iferror-001",
+      "split": "train",
+      "description": "Use an exact cross-sheet VLOOKUP with error handling.",
+      "instruction_type": "Cell-Level Manipulation",
+      "instruction": "Populate Orders!C2 from Lookup using the code in A2. Use an exact match and return Not found if the code is absent.",
+      "answer_ranges": [{"sheet": "Orders", "range": "C2"}],
+      "data_position": "Orders!A1:C2,Lookup!A1:B4",
+      "workbook": {"sheets": [{"name": "Orders", "cells": {"A1": "Code", "B1": "Units", "C1": "Name", "A2": "P-20", "B2": 4}}, {"name": "Lookup", "cells": {"A1": "Code", "B1": "Name", "A2": "P-10", "B2": "North", "A3": "P-20", "B3": "South", "A4": "P-30", "B4": "West"}}]},
+      "plan": {"route": "operations", "summary": "Look up the order name.", "operations": [{"op": "set_formula", "sheet": "Orders", "cell": "C2", "formula": "=IFERROR(VLOOKUP(A2,Lookup!$A$2:$B$4,2,FALSE),\"Not found\")"}]},
+      "expectations": {"cells": {"Orders!C2": "=IFERROR(VLOOKUP(A2,Lookup!$A$2:$B$4,2,FALSE),\"Not found\")"}, "calculated": {"Orders!C2": "South"}, "preserved": {"Orders!A2": "P-20", "Lookup!B3": "South"}}
+    },
+    {
+      "id": "synthetic-fill-product-001",
+      "split": "train",
+      "description": "Fill a relative multiplication formula down a range.",
+      "instruction_type": "Cell-Level Manipulation",
+      "instruction": "Fill Sales!D2:D5 with line totals calculated as quantity in B times price in C.",
+      "answer_ranges": [{"sheet": "Sales", "range": "D2:D5"}],
+      "data_position": "Sales!A1:D5",
+      "workbook": {"sheets": [{"name": "Sales", "cells": {"A1": "Item", "B1": "Qty", "C1": "Price", "D1": "Total", "A2": "A", "B2": 2, "C2": 10, "A3": "B", "B3": 3, "C3": 12, "A4": "C", "B4": 1, "C4": 8, "A5": "D", "B5": 5, "C5": 4}}]},
+      "plan": {"route": "operations", "summary": "Fill the line-total formula.", "operations": [{"op": "fill_formula", "sheet": "Sales", "range": "D2:D5", "formula": "=B2*C2"}]},
+      "expectations": {"cells": {"Sales!D2": "=B2*C2", "Sales!D3": "=B3*C3", "Sales!D4": "=B4*C4", "Sales!D5": "=B5*C5"}, "calculated": {"Sales!D2": 20, "Sales!D3": 36, "Sales!D4": 8, "Sales!D5": 20}, "preserved": {"Sales!A3": "B", "Sales!C5": 4}}
+    },
+    {
+      "id": "synthetic-fill-margin-001",
+      "split": "train",
+      "description": "Fill a division formula with zero-error handling.",
+      "instruction_type": "Cell-Level Manipulation",
+      "instruction": "Fill Returns!D2:D4 with profit divided by invested capital, returning zero when the division errors.",
+      "answer_ranges": [{"sheet": "Returns", "range": "D2:D4"}],
+      "data_position": "Returns!A1:D4",
+      "workbook": {"sheets": [{"name": "Returns", "cells": {"A1": "Fund", "B1": "Profit", "C1": "Capital", "D1": "Return", "A2": "I", "B2": 20, "C2": 100, "A3": "II", "B3": 5, "C3": 0, "A4": "III", "B4": -3, "C4": 50}}]},
+      "plan": {"route": "operations", "summary": "Fill error-safe return formulae.", "operations": [{"op": "fill_formula", "sheet": "Returns", "range": "D2:D4", "formula": "=IFERROR(B2/C2,0)"}]},
+      "expectations": {"cells": {"Returns!D2": "=IFERROR(B2/C2,0)", "Returns!D3": "=IFERROR(B3/C3,0)", "Returns!D4": "=IFERROR(B4/C4,0)"}, "calculated": {"Returns!D2": 0.2, "Returns!D3": 0, "Returns!D4": -0.06}, "preserved": {"Returns!A4": "III", "Returns!B2": 20}}
+    },
+    {
+      "id": "synthetic-countifs-001",
+      "split": "train",
+      "description": "Count rows matching two conditions.",
+      "instruction_type": "Cell-Level Manipulation",
+      "instruction": "In Summary!B2, count Data rows where Status is Open and Amount is greater than 100.",
+      "answer_ranges": [{"sheet": "Summary", "range": "B2"}],
+      "data_position": "Data!A1:C5,Summary!A1:B2",
+      "workbook": {"sheets": [{"name": "Data", "cells": {"A1": "ID", "B1": "Status", "C1": "Amount", "A2": 1, "B2": "Open", "C2": 150, "A3": 2, "B3": "Closed", "C3": 220, "A4": 3, "B4": "Open", "C4": 90, "A5": 4, "B5": "Open", "C5": 400}}, {"name": "Summary", "cells": {"A1": "Measure", "B1": "Value", "A2": "Large open items"}}]},
+      "plan": {"route": "operations", "summary": "Count large open items.", "operations": [{"op": "set_formula", "sheet": "Summary", "cell": "B2", "formula": "=COUNTIFS(Data!$B$2:$B$5,\"Open\",Data!$C$2:$C$5,\">100\")"}]},
+      "expectations": {"cells": {"Summary!B2": "=COUNTIFS(Data!$B$2:$B$5,\"Open\",Data!$C$2:$C$5,\">100\")"}, "calculated": {"Summary!B2": 2}, "preserved": {"Data!C5": 400, "Summary!A2": "Large open items"}}
+    },
+    {
+      "id": "synthetic-sumifs-001",
+      "split": "train",
+      "description": "Sum amounts for a category and status.",
+      "instruction_type": "Cell-Level Manipulation",
+      "instruction": "In Report!B2, sum Ledger amounts for Fund A where the status is Posted.",
+      "answer_ranges": [{"sheet": "Report", "range": "B2"}],
+      "data_position": "Ledger!A1:C5,Report!A1:B2",
+      "workbook": {"sheets": [{"name": "Ledger", "cells": {"A1": "Fund", "B1": "Status", "C1": "Amount", "A2": "Fund A", "B2": "Posted", "C2": 100, "A3": "Fund B", "B3": "Posted", "C3": 75, "A4": "Fund A", "B4": "Draft", "C4": 30, "A5": "Fund A", "B5": "Posted", "C5": 45}}, {"name": "Report", "cells": {"A1": "Metric", "B1": "Value", "A2": "Fund A posted"}}]},
+      "plan": {"route": "operations", "summary": "Sum posted Fund A entries.", "operations": [{"op": "set_formula", "sheet": "Report", "cell": "B2", "formula": "=SUMIFS(Ledger!$C$2:$C$5,Ledger!$A$2:$A$5,\"Fund A\",Ledger!$B$2:$B$5,\"Posted\")"}]},
+      "expectations": {"cells": {"Report!B2": "=SUMIFS(Ledger!$C$2:$C$5,Ledger!$A$2:$A$5,\"Fund A\",Ledger!$B$2:$B$5,\"Posted\")"}, "calculated": {"Report!B2": 145}, "preserved": {"Ledger!C4": 30, "Report!A2": "Fund A posted"}}
+    },
+    {
+      "id": "synthetic-text-label-001",
+      "split": "train",
+      "description": "Join two text fields with a delimiter.",
+      "instruction_type": "Cell-Level Manipulation",
+      "instruction": "In Assets!C2, combine the asset code in A2 and region in B2 separated by space, hyphen, space.",
+      "answer_ranges": [{"sheet": "Assets", "range": "C2"}],
+      "data_position": "Assets!A1:C2",
+      "workbook": {"sheets": [{"name": "Assets", "cells": {"A1": "Code", "B1": "Region", "C1": "Label", "A2": "A17", "B2": "Europe"}}]},
+      "plan": {"route": "operations", "summary": "Build the asset label.", "operations": [{"op": "set_formula", "sheet": "Assets", "cell": "C2", "formula": "=A2&\" - \"&B2"}]},
+      "expectations": {"cells": {"Assets!C2": "=A2&\" - \"&B2"}, "calculated": {"Assets!C2": "A17 - Europe"}, "preserved": {"Assets!A2": "A17", "Assets!B2": "Europe"}}
+    },
+    {
+      "id": "synthetic-eomonth-001",
+      "split": "train",
+      "description": "Calculate a month-end date from an Excel serial.",
+      "instruction_type": "Cell-Level Manipulation",
+      "instruction": "In Dates!B2, return the final calendar day of the month containing the date in A2.",
+      "answer_ranges": [{"sheet": "Dates", "range": "B2"}],
+      "data_position": "Dates!A1:B2",
+      "workbook": {"sheets": [{"name": "Dates", "cells": {"A1": "Transaction date", "B1": "Month end", "A2": 45306}}]},
+      "plan": {"route": "operations", "summary": "Calculate the month-end date.", "operations": [{"op": "set_formula", "sheet": "Dates", "cell": "B2", "formula": "=EOMONTH(A2,0)"}]},
+      "expectations": {"cells": {"Dates!B2": "=EOMONTH(A2,0)"}, "calculated": {"Dates!B2": 45322}, "preserved": {"Dates!A1": "Transaction date", "Dates!A2": 45306}}
+    },
+    {
+      "id": "synthetic-clear-notes-001",
+      "split": "train",
+      "description": "Clear only a declared notes range.",
+      "instruction_type": "Cell-Level Manipulation",
+      "instruction": "Clear the obsolete notes in Review!D2:D3 without changing the records.",
+      "answer_ranges": [{"sheet": "Review", "range": "D2:D3"}],
+      "data_position": "Review!A1:D3",
+      "workbook": {"sheets": [{"name": "Review", "cells": {"A1": "ID", "B1": "Owner", "C1": "Status", "D1": "Note", "A2": 1, "B2": "A", "C2": "Done", "D2": "old", "A3": 2, "B3": "B", "C3": "Open", "D3": "remove"}}]},
+      "plan": {"route": "operations", "summary": "Clear the obsolete note cells.", "operations": [{"op": "clear_range", "sheet": "Review", "range": "D2:D3"}]},
+      "expectations": {"cells": {"Review!D2": null, "Review!D3": null}, "calculated": {}, "preserved": {"Review!A2": 1, "Review!C3": "Open"}}
+    },
+    {
+      "id": "synthetic-filter-approved-sheet-001",
+      "split": "train",
+      "description": "Create a result sheet containing approved source rows.",
+      "instruction_type": "Sheet-Level Manipulation",
+      "instruction": "Create an Approved worksheet with Name and Amount columns, copying only Data rows whose Status is Approved in source order.",
+      "answer_ranges": [{"sheet": "Approved", "range": "A1:B4"}],
+      "data_position": "Data!A1:C5",
+      "workbook": {"sheets": [{"name": "Data", "cells": {"A1": "Name", "B1": "Amount", "C1": "Status", "A2": "Alpha", "B2": 100, "C2": "Approved", "A3": "Beta", "B3": 75, "C3": "Review", "A4": "Gamma", "B4": 220, "C4": "Approved", "A5": "Delta", "B5": 40, "C5": "Rejected"}}]},
+      "plan": {"route": "python", "summary": "Create the approved-items worksheet.", "python_code": "def transform(wb):\n    source = wb[\"Data\"]\n    output = wb.create_sheet(\"Approved\")\n    output.append([\"Name\", \"Amount\"])\n    target_row = 2\n    for source_row in range(2, source.max_row + 1):\n        if source.cell(source_row, 3).value == \"Approved\":\n            output.cell(target_row, 1).value = source.cell(source_row, 1).value\n            output.cell(target_row, 2).value = source.cell(source_row, 2).value\n            target_row += 1"},
+      "expectations": {"cells": {"Approved!A1": "Name", "Approved!B1": "Amount", "Approved!A2": "Alpha", "Approved!B2": 100, "Approved!A3": "Gamma", "Approved!B3": 220, "Approved!A4": null, "Approved!B4": null}, "calculated": {}, "preserved": {"Data!A3": "Beta", "Data!C5": "Rejected"}}
+    },
+    {
+      "id": "synthetic-averageif-001",
+      "split": "tune",
+      "description": "Average amounts matching a category.",
+      "instruction_type": "Cell-Level Manipulation",
+      "instruction": "In Summary!B2, calculate the average Data amount for rows in the Core category.",
+      "answer_ranges": [{"sheet": "Summary", "range": "B2"}],
+      "data_position": "Data!A1:B5,Summary!A1:B2",
+      "workbook": {"sheets": [{"name": "Data", "cells": {"A1": "Category", "B1": "Amount", "A2": "Core", "B2": 10, "A3": "Growth", "B3": 50, "A4": "Core", "B4": 30, "A5": "Core", "B5": 20}}, {"name": "Summary", "cells": {"A1": "Metric", "B1": "Value", "A2": "Core average"}}]},
+      "plan": {"route": "operations", "summary": "Average the Core amounts.", "operations": [{"op": "set_formula", "sheet": "Summary", "cell": "B2", "formula": "=AVERAGEIF(Data!$A$2:$A$5,\"Core\",Data!$B$2:$B$5)"}]},
+      "expectations": {"cells": {"Summary!B2": "=AVERAGEIF(Data!$A$2:$A$5,\"Core\",Data!$B$2:$B$5)"}, "calculated": {"Summary!B2": 20}, "preserved": {"Data!B3": 50, "Summary!A2": "Core average"}}
+    },
+    {
+      "id": "synthetic-copy-template-001",
+      "split": "tune",
+      "description": "Copy a formula template and translate relative references.",
+      "instruction_type": "Cell-Level Manipulation",
+      "instruction": "Copy Template!C2:C4 into D2:D4 with formula references translated as normal Excel copy and paste.",
+      "answer_ranges": [{"sheet": "Template", "range": "D2:D4"}],
+      "data_position": "Template!A1:D4",
+      "workbook": {"sheets": [{"name": "Template", "cells": {"A1": "Left", "B1": "Right", "C1": "Template", "D1": "Copy", "A2": 1, "B2": 2, "C2": "=A2+B2", "A3": 3, "B3": 4, "C3": "=A3+B3", "A4": 5, "B4": 6, "C4": "=A4+B4"}}]},
+      "plan": {"route": "operations", "summary": "Copy and translate the template formulae.", "operations": [{"op": "copy_range", "source_sheet": "Template", "source_range": "C2:C4", "destination_sheet": "Template", "destination_cell": "D2", "include_style": true}]},
+      "expectations": {"cells": {"Template!D2": "=B2+C2", "Template!D3": "=B3+C3", "Template!D4": "=B4+C4"}, "calculated": {"Template!D2": 5, "Template!D3": 11, "Template!D4": 17}, "preserved": {"Template!C2": "=A2+B2", "Template!A4": 5}}
+    },
+    {
+      "id": "synthetic-rank-001",
+      "split": "tune",
+      "description": "Rank a value against a fixed range in descending order.",
+      "instruction_type": "Cell-Level Manipulation",
+      "instruction": "Fill Performance!C2:C4 with each return's descending rank against B2:B4.",
+      "answer_ranges": [{"sheet": "Performance", "range": "C2:C4"}],
+      "data_position": "Performance!A1:C4",
+      "workbook": {"sheets": [{"name": "Performance", "cells": {"A1": "Fund", "B1": "Return", "C1": "Rank", "A2": "A", "B2": 0.12, "A3": "B", "B3": 0.2, "A4": "C", "B4": 0.08}}]},
+      "plan": {"route": "operations", "summary": "Fill descending return ranks.", "operations": [{"op": "fill_formula", "sheet": "Performance", "range": "C2:C4", "formula": "=RANK(B2,$B$2:$B$4,0)"}]},
+      "expectations": {"cells": {"Performance!C2": "=RANK(B2,$B$2:$B$4,0)", "Performance!C3": "=RANK(B3,$B$2:$B$4,0)", "Performance!C4": "=RANK(B4,$B$2:$B$4,0)"}, "calculated": {"Performance!C2": 2, "Performance!C3": 1, "Performance!C4": 3}, "preserved": {"Performance!A3": "B", "Performance!B4": 0.08}}
+    },
+    {
+      "id": "synthetic-category-summary-sheet-001",
+      "split": "tune",
+      "description": "Create a first-seen category summary with accumulated values.",
+      "instruction_type": "Sheet-Level Manipulation",
+      "instruction": "Create a Summary worksheet containing each category from Data once in first-seen order and its total Amount.",
+      "answer_ranges": [{"sheet": "Summary", "range": "A1:B4"}],
+      "data_position": "Data!A1:B6",
+      "workbook": {"sheets": [{"name": "Data", "cells": {"A1": "Category", "B1": "Amount", "A2": "Core", "B2": 10, "A3": "Growth", "B3": 25, "A4": "Core", "B4": 15, "A5": "Income", "B5": 8, "A6": "Growth", "B6": 5}}]},
+      "plan": {"route": "python", "summary": "Create totals by first-seen category.", "python_code": "def transform(wb):\n    source = wb[\"Data\"]\n    totals = {}\n    order = []\n    for row in range(2, source.max_row + 1):\n        category = source.cell(row, 1).value\n        amount = source.cell(row, 2).value\n        if category not in totals:\n            totals[category] = 0\n            order.append(category)\n        totals[category] += amount\n    output = wb.create_sheet(\"Summary\")\n    output.append([\"Category\", \"Total\"])\n    for category in order:\n        output.append([category, totals[category]])"},
+      "expectations": {"cells": {"Summary!A1": "Category", "Summary!B1": "Total", "Summary!A2": "Core", "Summary!B2": 25, "Summary!A3": "Growth", "Summary!B3": 30, "Summary!A4": "Income", "Summary!B4": 8}, "calculated": {}, "preserved": {"Data!A4": "Core", "Data!B6": 5}}
+    }
+  ]
+}

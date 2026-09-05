@@ -1,0 +1,66 @@
+{
+  "schema_version": 1,
+  "status": "offline_preflight_only",
+  "paid_training_run": false,
+  "checkpoint": null,
+  "benchmark_goldens_used": false,
+  "benchmark_initial_workbooks_used": false,
+  "model": "Qwen/Qwen3.8-27B",
+  "renderer": "qwen3_8_xhigh_reasoning",
+  "train_on_what": "LAST_ASSISTANT_MESSAGE",
+  "seed": 240905,
+  "corpus": {
+    "total_cases": 16,
+    "train_cases": 12,
+    "tune_cases": 4,
+    "operations_cases": 14,
+    "python_cases": 2,
+    "formula_cases_recalculated": 13,
+    "source_case_sha256": "271bec812bdacec14fb9818333dde7d32ff3379d136a92e45d3d3f45dbdb1d5a",
+    "train_jsonl_sha256": "f4b76dcf8c87265965af92797c4d9a020d19386df4c32a5d8c37455c906dcd20",
+    "tune_jsonl_sha256": "be26cfa0d9eba763d900ef60a0088855468517be89a3391d109e2457501df230"
+  },
+  "tokenizer": {
+    "repository": "Qwen/Qwen3.8-27B",
+    "revision": "1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0",
+    "vocabulary_size": 248044
+  },
+  "rendered_examples": {
+    "maximum_allowed_tokens": 32768,
+    "minimum_tokens": 1880,
+    "maximum_tokens": 2404,
+    "mean_tokens": 2042.12,
+    "minimum_target_tokens": 41,
+    "maximum_target_tokens": 164,
+    "mean_target_tokens": 72.94
+  },
+  "formula_verification": {
+    "engine": "LibreOffice",
+    "version": "LibreOfficeDev 26.8.0.0.alpha0 2c87e51eeaa2b413ff4ae097b2705eea1995d8e5",
+    "all_independent_value_oracles_passed": true
+  },
+  "default_pilot_preflight": {
+    "batch_size": 2,
+    "steps": 4,
+    "selected_train_examples": 8,
+    "tune_examples_per_pass": 4,
+    "tune_passes": 2,
+    "projected_train_model_input_tokens": 16111,
+    "projected_tune_model_input_tokens_per_pass": 8373,
+    "projected_total_model_input_tokens": 32857,
+    "hard_maximum_model_input_tokens": 50000,
+    "data_fingerprint": "fbc1580d38da367e03da4095286ba85281c14815687720a58b25e14e18636c76"
+  },
+  "dependencies": {
+    "openpyxl": "3.1.5",
+    "pydantic": "2.13.5",
+    "tinker": "0.27.1",
+    "tinker-cookbook": "0.5.7",
+    "transformers": "5.5.4"
+  },
+  "prompt_hashes": {
+    "cell_system": "86067c6a62e4c29aafe52ea05d3507c849eb1dfd2426df8d0b9e320890818373",
+    "sheet_system": "75cfe0a111b19b32b230770f3f3a5aafdab23bba91dcc7d6b1dac0af5633e1e5",
+    "solve_schema": "e24cdc3b27a6f9400a0e643e99b8c1aa5c944f300a9884ecb791090432368155"
+  }
+}
