@@ -10,7 +10,11 @@ import pytest
 
 from exactsource.artifacts import ArtifactError, TraceRecorder, read_jsonl
 from exactsource.cli import run_cli
-from exactsource.config import CELL_MAX_OUTPUT_TOKENS, SHEET_MAX_OUTPUT_TOKENS
+from exactsource.config import (
+    CELL_MAX_OUTPUT_TOKENS,
+    CELL_TRUNCATION_RECOVERY_MAX_OUTPUT_TOKENS,
+    SHEET_MAX_OUTPUT_TOKENS,
+)
 from exactsource.contracts import (
     ContextPack,
     ModelReply,
@@ -287,7 +291,12 @@ def test_cell_max_tokens_uses_one_fresh_no_think_recovery(tmp_path: Path) -> Non
         {"role": "assistant", "content": "<think>\n\n</think>\n\n"},
     ]
     assert "partial-response-must-not-be-replayed" not in json.dumps(recovery_messages)
-    assert client.requests[1]["max_output_tokens"] == CELL_MAX_OUTPUT_TOKENS
+    assert client.requests[0]["max_output_tokens"] == CELL_MAX_OUTPUT_TOKENS == 16_000
+    assert (
+        client.requests[1]["max_output_tokens"]
+        == CELL_TRUNCATION_RECOVERY_MAX_OUTPUT_TOKENS
+        == 32_000
+    )
     assert client.requests[1]["reasoning_effort"] is False
     assert _cell(working) == "done"
     assert len(trace.records) == 2
@@ -301,7 +310,7 @@ def test_cell_max_tokens_uses_one_fresh_no_think_recovery(tmp_path: Path) -> Non
     assert trace.records[1]["semantic_repair"] is True
     assert trace.records[1]["generation_policy"] == "cell_max_tokens_no_think_recovery"
     assert trace.records[1]["recovery_reason"] == "max_tokens"
-    assert trace.records[1]["max_output_tokens"] == CELL_MAX_OUTPUT_TOKENS
+    assert trace.records[1]["max_output_tokens"] == CELL_TRUNCATION_RECOVERY_MAX_OUTPUT_TOKENS
     assert trace.records[1]["reasoning_effort"] is False
     assert trace.records[1]["plan_status"] == "accepted"
 
@@ -406,7 +415,48 @@ def test_rejected_cell_truncation_recovery_never_makes_a_third_call(tmp_path: Pa
         solver(task, working, TraceRecorder(task.id))
 
     assert client.calls == 2
+    assert client.requests[1]["max_output_tokens"] == CELL_TRUNCATION_RECOVERY_MAX_OUTPUT_TOKENS
     assert client.requests[1]["reasoning_effort"] is False
+
+
+def test_capped_cell_truncation_recovery_never_makes_a_third_call(tmp_path: Path) -> None:
+    task = _task(tmp_path, "twice-capped-cell", "initial")
+    client = _FakeClient(
+        [
+            ModelTruncationError(
+                "initial response stopped at max_tokens",
+                output_tokens=CELL_MAX_OUTPUT_TOKENS,
+            ),
+            ModelTruncationError(
+                "recovery response stopped at max_tokens",
+                output_tokens=CELL_TRUNCATION_RECOVERY_MAX_OUTPUT_TOKENS,
+            ),
+            _policy_test_plan().model_dump_json(),
+        ]
+    )
+    solver = _policy_test_solver(client, semantic_repairs=2)
+    working = tmp_path / "working-twice-capped-cell.xlsx"
+    working.write_bytes(task.init_xlsx.read_bytes())
+    trace = TraceRecorder(task.id)
+
+    with pytest.raises(ModelTruncationError):
+        solver(task, working, trace)
+
+    assert client.calls == 2
+    assert [request["max_output_tokens"] for request in client.requests] == [
+        CELL_MAX_OUTPUT_TOKENS,
+        CELL_TRUNCATION_RECOVERY_MAX_OUTPUT_TOKENS,
+    ]
+    assert [request["reasoning_effort"] for request in client.requests] == [True, False]
+    assert [record["generation_policy"] for record in trace.records] == [
+        "cell_reasoning",
+        "cell_max_tokens_no_think_recovery",
+    ]
+    assert [record["stop_reason"] for record in trace.records] == [
+        "max_tokens",
+        "max_tokens",
+    ]
+    assert _cell(working) == "initial"
 
 
 def test_unsafe_cell_truncation_recovery_fails_without_changing_workbook(
@@ -436,6 +486,7 @@ def test_unsafe_cell_truncation_recovery_fails_without_changing_workbook(
         solver(task, working, TraceRecorder(task.id))
 
     assert client.calls == 2
+    assert client.requests[1]["max_output_tokens"] == CELL_TRUNCATION_RECOVERY_MAX_OUTPUT_TOKENS
     assert _cell(working) == "initial"
 
 
@@ -478,10 +529,14 @@ def test_sheet_completed_rejection_keeps_one_reasoning_repair_at_32k(tmp_path: P
 
     assert result.status == "ok"
     assert client.calls == 2
-    assert [request["max_output_tokens"] for request in client.requests] == [
-        SHEET_MAX_OUTPUT_TOKENS,
-        SHEET_MAX_OUTPUT_TOKENS,
-    ]
+    assert (
+        [request["max_output_tokens"] for request in client.requests]
+        == [
+            SHEET_MAX_OUTPUT_TOKENS,
+            SHEET_MAX_OUTPUT_TOKENS,
+        ]
+        == [32_000, 32_000]
+    )
     assert [request["reasoning_effort"] for request in client.requests] == [True, True]
     assert [record["generation_policy"] for record in trace.records] == [
         "sheet_reasoning",
@@ -535,10 +590,14 @@ def test_default_solver_repairs_one_rejected_plan_and_traces_each_call(tmp_path:
 
     assert result.status == "ok"
     assert client.calls == 2
-    assert [request["max_output_tokens"] for request in client.requests] == [
-        CELL_MAX_OUTPUT_TOKENS,
-        CELL_MAX_OUTPUT_TOKENS,
-    ]
+    assert (
+        [request["max_output_tokens"] for request in client.requests]
+        == [
+            CELL_MAX_OUTPUT_TOKENS,
+            CELL_MAX_OUTPUT_TOKENS,
+        ]
+        == [16_000, 16_000]
+    )
     assert [request["reasoning_effort"] for request in client.requests] == [True, True]
     repaired_messages = client.requests[1]["messages"]
     assert isinstance(repaired_messages, list)

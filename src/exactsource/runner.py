@@ -32,6 +32,7 @@ from exactsource.artifacts import (
 from exactsource.config import (
     API_KEY_ENV,
     CELL_MAX_OUTPUT_TOKENS,
+    CELL_TRUNCATION_RECOVERY_MAX_OUTPUT_TOKENS,
     CELL_TRUNCATION_RECOVERY_REASONING_EFFORT,
     CONCURRENCY,
     MODEL_NAME,
@@ -117,7 +118,7 @@ _SHEET_POLICY = _GenerationPolicy(
 )
 _CELL_TRUNCATION_RECOVERY_POLICY = _GenerationPolicy(
     name="cell_max_tokens_no_think_recovery",
-    max_output_tokens=CELL_MAX_OUTPUT_TOKENS,
+    max_output_tokens=CELL_TRUNCATION_RECOVERY_MAX_OUTPUT_TOKENS,
     reasoning_effort=CELL_TRUNCATION_RECOVERY_REASONING_EFFORT,
     recovery_reason="max_tokens",
 )
