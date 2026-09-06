@@ -1,0 +1,178 @@
+{
+  "schema_version": 1,
+  "run_id": "acceptance-10-8b84dba-20260906",
+  "observed_on_utc": "2026-09-06",
+  "purpose": "Predeclared ten-task acceptance run before the full benchmark.",
+  "scope": {
+    "task_count": 10,
+    "cell_level_tasks": 5,
+    "sheet_level_tasks": 5,
+    "selection_policy": "Predeclared development IDs; this is not a random sample or the final 400-task score.",
+    "task_ids": [
+      "13-1",
+      "51-12",
+      "60-7",
+      "290-1",
+      "384-4",
+      "41691",
+      "40959",
+      "42354",
+      "44266",
+      "45738"
+    ]
+  },
+  "execution_identity": {
+    "solver_commit": "8b84dba1d9263e2123b8f15267239b70ff817907",
+    "model": "Qwen/Qwen3.8-27B",
+    "dataset_json_sha256": "bcecaa89a005bd4e3bbe98da150a86e8062c27f262e575d5e47bd9861b3525e7",
+    "evaluator_commit": "37d9016264762a25cae49e077cd0893055bd9093",
+    "evaluator_file_sha256": "8840a0e93df958d41dc5892ee42b33210ba773c1e0b73b691bbaf7d06a84d46b",
+    "libreoffice_version": "26.8.0.3",
+    "container_image_id": "sha256:ce130c19891d54a78f6071d9e8e85868c3e92c6ac7e093d60a7b76fe532de50b",
+    "container_platform": "linux/arm64"
+  },
+  "execution": {
+    "continuity": "single_uninterrupted_run",
+    "host_elapsed_seconds": 601.15,
+    "coordinator_elapsed_seconds": 596.061,
+    "tasks": {
+      "total": 10,
+      "runtime_successes": 10,
+      "safe_fallbacks": 0
+    },
+    "model_calls": 10,
+    "trace_records": 10,
+    "second_model_calls": 0,
+    "transport_retries": 0
+  },
+  "provider_reported_usage": {
+    "output_tokens": 117592,
+    "input_tokens_reported": 0,
+    "input_tokens_interpretation": "Unavailable: the provider reported zero, which is not treated as measured input usage.",
+    "monetary_cost_claimed": false
+  },
+  "evaluation": {
+    "evaluator": "Unchanged organiser research/evaluate.py",
+    "result": {
+      "items": 10,
+      "graded": 10,
+      "missing": 0,
+      "errors": 0,
+      "pass_rate": 0.9,
+      "cell_accuracy": 0.9987,
+      "pass_rate_cell_level": 0.8,
+      "pass_rate_sheet_level": 1.0,
+      "passed_items": 9,
+      "failed_items": 1,
+      "correct_cells": 776,
+      "compared_cells": 777
+    },
+    "runtime_success_is_correctness": false
+  },
+  "items": [
+    {
+      "id": "13-1",
+      "type": "Sheet-Level Manipulation",
+      "status": "graded",
+      "pass": true,
+      "correct": 120,
+      "cells": 120,
+      "mismatch_count": 0
+    },
+    {
+      "id": "51-12",
+      "type": "Sheet-Level Manipulation",
+      "status": "graded",
+      "pass": true,
+      "correct": 1,
+      "cells": 1,
+      "mismatch_count": 0
+    },
+    {
+      "id": "60-7",
+      "type": "Sheet-Level Manipulation",
+      "status": "graded",
+      "pass": true,
+      "correct": 45,
+      "cells": 45,
+      "mismatch_count": 0
+    },
+    {
+      "id": "290-1",
+      "type": "Sheet-Level Manipulation",
+      "status": "graded",
+      "pass": true,
+      "correct": 99,
+      "cells": 99,
+      "mismatch_count": 0
+    },
+    {
+      "id": "384-4",
+      "type": "Sheet-Level Manipulation",
+      "status": "graded",
+      "pass": true,
+      "correct": 7,
+      "cells": 7,
+      "mismatch_count": 0
+    },
+    {
+      "id": "41691",
+      "type": "Cell-Level Manipulation",
+      "status": "graded",
+      "pass": true,
+      "correct": 1,
+      "cells": 1,
+      "mismatch_count": 0
+    },
+    {
+      "id": "40959",
+      "type": "Cell-Level Manipulation",
+      "status": "graded",
+      "pass": true,
+      "correct": 6,
+      "cells": 6,
+      "mismatch_count": 0
+    },
+    {
+      "id": "42354",
+      "type": "Cell-Level Manipulation",
+      "status": "graded",
+      "pass": true,
+      "correct": 7,
+      "cells": 7,
+      "mismatch_count": 0
+    },
+    {
+      "id": "44266",
+      "type": "Cell-Level Manipulation",
+      "status": "graded",
+      "pass": true,
+      "correct": 11,
+      "cells": 11,
+      "mismatch_count": 0
+    },
+    {
+      "id": "45738",
+      "type": "Cell-Level Manipulation",
+      "status": "graded",
+      "pass": false,
+      "correct": 479,
+      "cells": 480,
+      "mismatch_count": 1
+    }
+  ],
+  "publication": {
+    "scope": "this_sanitised_experiment_record_only",
+    "included_in_this_sanitised_record": {
+      "raw_results": false,
+      "raw_traces": false,
+      "prompts": false,
+      "model_responses": false,
+      "workbook_contents": false,
+      "credentials": false
+    },
+    "credential_scan_scope": "Publishable repository files, existing commits and completed run artefacts, including decompressed workbook payloads; ignored local secret files excluded.",
+    "credential_found_in_scan_scope": false
+  },
+  "limits": "Runtime success means the pipeline produced and applied a plan; only the unchanged evaluator determines correctness. This ten-task run is acceptance evidence, not a representative benchmark estimate."
+}
