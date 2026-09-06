@@ -412,12 +412,17 @@ evaluation or manual inspection.
 
 ## Work remaining before submission
 
-The current repository still needs:
+The benchmark run, unedited organiser `results.json`, traces and output
+workbooks are present. The remaining human-owned submission work is:
 
-- A complete 400-task run and the unedited organiser `results.json`
-- A public demo video linked from `SUBMISSION.md`
-- A before-and-after preservation audit for the Python route
-- Failure analysis based on held-out and final evaluator results
+- Add the confirmed team list to `SUBMISSION.md`
+- Record and link the public demo video
+
+A broader before-and-after OOXML preservation audit for the Python route remains
+a useful post-submission improvement rather than a completed safety claim. The
+published final-run record and documentation distinguish runtime failures from
+evaluator correctness; further family-level analysis must not feed golden values
+back into inference.
 
 The optional fine-tuning path remains separate. A fine-tuned checkpoint will be
 used only if:

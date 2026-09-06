@@ -1,6 +1,7 @@
 # Submission: ExactSource
 
-This is a working submission draft. Fields marked **pending** must be replaced with evidence from the final official run before submission.
+This submission draft contains the completed public benchmark evidence. The team
+list and demo-video URL remain pending user input.
 
 ## Team
 
@@ -11,37 +12,26 @@ This is a working submission draft. Fields marked **pending** must be replaced w
 
 ## What we built and why
 
-ExactSource is a formula-aware spreadsheet reasoning system for the
-SpreadsheetBench research task. Flat value prediction can hide useful formula
-patterns, lose distant workbook context and scale poorly when a sheet-level task
-changes thousands of cells. ExactSource instead inspects the initial workbook
-without reading golden files and gives the fixed `Qwen/Qwen3.8-27B` model a
-bounded, formula-preserving view of the relevant evidence.
-
-Cell tasks receive an operations-only schema. Sheet tasks receive a mutually
-exclusive operations-or-Python schema. The operations route supports formula
-writes, relative fills, range copies and explicit clears inside the declared
-answer ranges; broader sheet transformations can use restricted workbook code in
-the submitted container. Context evidence is de-duplicated by worksheet and
-coordinate, and large sections retain their structural headings before body
-content is clipped.
-
-The runtime validates plan structure, worksheet names, ranges, aggregate write
-volume and newly introduced formulae before promoting a candidate workbook.
-Formula checks cover prohibited capabilities, malformed delimiters and explicit
-references to absent worksheets. They also reject a literal `VLOOKUP` or
-`HLOOKUP` index that is provably outside a bounded static A1 range, but they do
-not claim broader spreadsheet semantics or calculated results. Every streamed
-provider attempt is traced.
-Individual failures receive a readable initial-workbook fallback so the remaining
-batch can finish.
-
-Inference uses temperature zero, bounded retries and the unmodified base model.
-An isolated 16-case synthetic SFT corpus has been validated offline, but it has
-not been sent to Tinker or used to produce the submitted model. The public 400
-golden workbooks are not used for inference or training. The final official score
-and failure analysis are pending; this draft does not treat structural validation
-as correctness evidence.
+ExactSource is a formula-aware SpreadsheetBench solver built to retain workbook
+context and produce auditable edits rather than predict isolated values. It
+inspects only the task metadata, instruction and initial workbook, then gives the
+fixed, unmodified `Qwen/Qwen3.8-27B` model a bounded formula-preserving view of
+relevant cells. Cell tasks receive a typed operations-only schema; sheet tasks
+receive mutually exclusive operations or restricted Python, allowing formula
+writes, relative fills, range copies, explicit clears and larger transformations
+without changing the model. Before publishing a candidate, the runtime validates
+plan structure, worksheet names, declared ranges, aggregate write volume and
+newly introduced formulae, and then reopens the workbook. Each streamed provider
+attempt is traced after secret redaction. A failed task receives a readable copy
+of its initial workbook so one failure does not stop the batch. The completed
+clean-start run used temperature zero and bounded retries, with no golden
+workbook access, golden-value lookup step, second model or fine-tuning. The
+organiser's unchanged evaluator graded all 400 outputs: overall pass rate
+`0.755`, cell accuracy `0.8006`, cell-level pass rate `0.7818` and sheet-level
+pass rate `0.696`. These results do not erase the limits: 31 tasks used safe
+fallbacks, runtime success is not correctness, repeated temperature-zero
+completions varied during development, unsupported data-validation extensions
+may be removed by `openpyxl`, and provider input-token counts were unavailable.
 
 ## Models
 
@@ -87,22 +77,72 @@ the command.
 
 ## Scores on the 400
 
-**Pending official full run. No score is claimed.**
+The organiser's unchanged evaluator graded all `400` predictions: `400` items,
+`0` missing and `0` evaluator errors.
 
-Before submission, run the organiser's shipped evaluator with `--all --out results.json`, commit that unedited `results.json`, and replace this paragraph with its exact `summary` block. The required `items` value is 400.
+| Official metric | Result |
+| --- | ---: |
+| Overall pass rate | `0.755` (75.5%) |
+| Cell accuracy | `0.8006` (80.06%) |
+| Cell-level pass rate | `0.7818` (78.18%) |
+| Sheet-level pass rate | `0.696` (69.6%) |
+
+The evaluator took `329.66` seconds and used LibreOffice 26.8.0.3 to recalculate
+the submitted workbooks. It ran from organiser commit
+`37d9016264762a25cae49e077cd0893055bd9093`; the evaluated `evaluate.py` had SHA-256
+`8840a0e93df958d41dc5892ee42b33210ba773c1e0b73b691bbaf7d06a84d46b`.
 
 ## Your run on the 400
 
-The following root artefacts are **pending generation by the final full run**:
+The full run started from a clean worktree at solver commit
+`8b84dba1d9263e2123b8f15267239b70ff817907`. It ran
+`Qwen/Qwen3.8-27B` through Tinker from `2026-09-06T00:10:23Z` to
+`2026-09-06T06:50:07Z`. The host elapsed time was `23,983.52` seconds. The run
+produced 400 predictions, 400 workbooks and 400 task trace files containing 498
+trace records. ExactSource reported 369 runtime successes and 31 safe
+initial-workbook fallbacks; runtime success means structural acceptance, not a
+correct benchmark answer.
+
+The provider reported `5,592,930` output tokens. It reported input-token values
+as zero, which are treated as unavailable rather than as zero usage. No paid
+fine-tuning or checkpoint was used.
+
+Run provenance:
+
+- Dataset `dataset.json` SHA-256:
+  `bcecaa89a005bd4e3bbe98da150a86e8062c27f262e575d5e47bd9861b3525e7`
+- Solver commit: `8b84dba1d9263e2123b8f15267239b70ff817907`
+- Docker image: `sha256:ce130c19891d54a78f6071d9e8e85868c3e92c6ac7e093d60a7b76fe532de50b`
+  on `linux/arm64`
+- Locked CI for the solver commit:
+  https://github.com/MasteraSnackin/ExactSource/actions/runs/34000060789
+- Organiser evaluator commit:
+  `37d9016264762a25cae49e077cd0893055bd9093`
+- `evaluate.py` SHA-256:
+  `8840a0e93df958d41dc5892ee42b33210ba773c1e0b73b691bbaf7d06a84d46b`
+- LibreOffice: `26.8.0.3`
+
+Seven scored output workbooks retain external-link metadata inherited from the
+supplied public initial workbooks. ExactSource introduced none of those targets,
+and they were retained so the published files remain the artefacts that were
+evaluated. Some are HTTPS targets that a spreadsheet client may contact if link
+updates are enabled; inspect the files with external updates disabled. The exact
+task IDs, attribution and licence boundary are recorded in `PROVENANCE.md`.
+
+The reviewed final artefacts are present at the repository root:
 
 - `predictions.jsonl`
 - `outputs/`
 - `traces/`
 - `run_metrics.json`
 - `run.log`
-- `results.json`, produced afterwards by the organiser's evaluator
+- `results.json`, produced by the organiser's evaluator after inference
 
-Do not treat the current draft as a submitted benchmark run until those files exist and pass both `tools/check_submission.py` and the shipped evaluator.
+`tools/check_submission.py` passed this layout with 400 predictions, 400
+workbooks, 400 trace files, 498 trace records and 31 recorded task failures. The
+public, non-secret aggregate records are
+[`experiments/acceptance_10_8b84dba.json`](experiments/acceptance_10_8b84dba.json)
+and [`experiments/full_400_8b84dba.json`](experiments/full_400_8b84dba.json).
 
 ## Code
 
@@ -145,8 +185,10 @@ cache. Tokenizer loading runs with network access disabled.
 
 - `docs/ARCHITECTURE.md`: trust boundaries, routing and failure isolation.
 - `docs/EVALUATION.md`: score discipline, held-out evaluation and failure analysis plan.
-- `docs/TINKER_COOKBOOK.md`: isolated, optional SFT experiment plan and current
-  permissions blocker.
+- `docs/FINAL_RUN_ANALYSIS.md`: post-run correctness, recovery, failure, latency
+  and output-token analysis that was not fed back into inference.
+- `docs/TINKER_COOKBOOK.md`: isolated, optional SFT experiment plan and explicit
+  paid-run gates; no SFT run was performed.
 - `training/README.md`: validated 16-case synthetic corpus, offline preparation
   contract and explicit paid-run gate.
 - `experiments/sft_preflight_v1.json`: non-secret hashes, exact renderer token

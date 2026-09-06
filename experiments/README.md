@@ -1,5 +1,75 @@
 # Experiment register
 
+## Final public 400-task run
+
+`full_400_8b84dba.json` is the sanitised record of one uninterrupted run over
+all 400 supplied public benchmark tasks. The unchanged organiser evaluator
+graded all 400 outputs with no missing items and no evaluator errors:
+
+| Metric | Result |
+|---|---:|
+| Pass rate | 0.7550 (302 / 400) |
+| Cell accuracy | 0.8006 (238,486 / 297,882) |
+| Cell-level pass rate | 0.7818 |
+| Sheet-level pass rate | 0.6960 |
+
+The solver completed 369 tasks through its normal execution path and emitted a
+safe fallback for 31 tasks. These are runtime outcomes, not correctness labels:
+the evaluator, independently, found 302 exact task passes. The run made 498
+model calls and wrote 498 trace records. Ninety-eight tasks received one second
+call: 72 max-token recoveries and 26 ordinary repairs. There were no transport
+retries.
+
+Host wall time was 23,983.52 seconds (6 hours, 39 minutes, 43.52 seconds); the
+separate evaluator run took 329.66 seconds. The provider reported 5,592,930
+output tokens. It reported zero input tokens, but this is recorded as unavailable
+rather than interpreted as zero input usage. No monetary-cost estimate is made.
+
+The public record identifies solver commit
+`8b84dba1d9263e2123b8f15267239b70ff817907`, the exact dataset and evaluator
+hashes, evaluator commit, LibreOffice 26.8.0.3, and the Linux/ARM64 container
+image ID. The complete local run directory was approximately 36 MB and its
+largest file was below 1 MB. Both the generic secret-pattern scan and the exact
+credential-value scan passed. The record also pins SHA-256 values for
+`predictions.jsonl`, `run.log`, `run_metrics.json` and the unedited
+`results.json`.
+
+The sanitised experiment JSON excludes raw traces, model prompts and responses,
+workbook contents, credentials and the raw evaluator result. It retains only
+aggregate evidence and, per item, `id`, `type`, `status`, `pass`, `correct`,
+`cells` and `mismatch_count`. A mismatch count is the number of sanitised
+mismatch records present, not a replacement for `cells - correct`.
+
+The separate organiser-required full-run artefacts are published at repository
+root: `results.json`, `traces/` (including the model prompts and responses) and
+the output workbooks under `outputs/`. The current-key scan found no match in
+publishable repository files, existing commits or completed run artefacts,
+including decompressed workbook payloads. A generic-pattern scan found no
+credential candidate in the completed run artefacts. Ignored local secret files
+were outside that publication scan.
+
+## Predeclared ten-task acceptance run
+
+`acceptance_10_8b84dba.json` records the acceptance gate run immediately before
+the full benchmark. Its ten development IDs were declared in advance and split
+evenly between cell-level and sheet-level tasks. All ten completed through the
+normal runtime path in 601.15 seconds, producing ten model calls and ten trace
+records with no repair call or fallback.
+
+| Metric | Result |
+|---|---:|
+| Pass rate | 0.9000 (9 / 10) |
+| Cell accuracy | 0.9987 (776 / 777) |
+| Cell-level pass rate | 0.8000 |
+| Sheet-level pass rate | 1.0000 |
+| Missing / evaluator errors | 0 / 0 |
+
+The provider reported 117,592 output tokens. As in the full run, its reported
+zero input-token value is treated as unavailable, and no monetary-cost estimate
+is made. This acceptance gate demonstrates both execution routes on a small,
+predeclared set; it is not presented as a representative benchmark estimate.
+Its JSON follows the same sanitised-record boundary described above.
+
 ## Public split v1
 
 `public_split_v1.json` freezes a deterministic metadata-stratified split before

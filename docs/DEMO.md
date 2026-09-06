@@ -1,133 +1,147 @@
-# Demo plan
+# Three-minute demo script
 
-This is a three-minute evidence-led recording plan for the research-track
-submission. Replace every pending item with output from the final run; do not hide
-or round a poor result.
+This script presents the completed research-track submission using the public
+artefacts at the repository root. Record the repository, terminal and workbook
+views directly; do not invent a separate product interface.
 
 ## Before recording
 
-- Use a clean browser window on the public GitHub repository and a terminal at the
-  repository root.
-- Keep `.env`, shell history, account pages, API keys and full request headers off
-  screen. Export the key before recording and disable shell command echo.
-- Prepare one cell-level example and one sheet-level example from the development
-  split. Keep their initial workbook, ExactSource output, trace and unedited
-  evaluator result together.
-- Open the initial and output workbooks at the graded range. Show formula-bar
-  content, not only the cached displayed value.
-- Run the structural checker and tests immediately before recording. Do not
-  present a previous terminal screenshot as a current run.
+- Use a clean browser window on the public repository and a terminal at its root.
+- Keep `.env`, shell history, Tinker account pages, API keys, request headers and
+  raw trace content off screen. Disable shell command echo before exporting a key.
+- Prepare one passing cell task and one passing sheet task from the development
+  data. `41691` and `13-1` are suitable verified examples. Have each source
+  workbook, task instruction, `outputs/<TASK_ID>.xlsx` and
+  `traces/<TASK_ID>.jsonl` ready.
+- Show formulas in the Excel or LibreOffice formula bar rather than relying on a
+  cached displayed value.
+- Keep external-link updates disabled when opening benchmark workbooks. Seven
+  evaluated outputs retain link metadata inherited from the public source data;
+  the provenance document lists their task IDs and handling boundary.
+- Do not rerun the paid 400-task inference during the recording. The committed
+  artefacts are the evidence from that completed run.
 
-## Recording sequence
+## 0:00-0:20 — The problem
 
-### 0:00–0:20 — The problem
-
-Show one workbook and its plain-English task.
+Show a source workbook beside its plain-English instruction.
 
 Suggested narration:
 
-> A plausible-looking formula is not enough. It must reference the right workbook
-> evidence, calculate the right answer, preserve everything outside the target and
-> survive the organiser's LibreOffice evaluation. ExactSource is built around that
-> complete contract.
+> Spreadsheet formulas can look plausible while referencing the wrong range or
+> changing the wrong cells. ExactSource turns a natural-language task into a
+> workbook edit, validates the proposed operation and declared edit scope, and
+> leaves the output and model trace available for independent evaluation.
 
-### 0:20–0:50 — The method
+## 0:20-1:00 — From instruction to workbook
 
-Show the method section in `README.md`, then briefly open
+Open the source workbook for cell task `41691`, then
+`outputs/41691.xlsx`. Show the target in the formula bar. Repeat briefly with the
+sheet task `13-1` and `outputs/13-1.xlsx`, pointing out that content outside the
+requested scope remains present.
+
+Suggested narration:
+
+> These are development examples from the supplied benchmark, not hand-written
+> mock-ups. The cell route produces focused formula operations. The sheet route
+> can use compact operations, as this example does, or run a broader restricted
+> transform in a constrained child process. Both routes use the required
+> `Qwen/Qwen3.8-27B` model.
+
+Do not claim fine-tuning: this submission uses prompting, structured plans,
+deterministic validation and bounded repair around the fixed model.
+
+## 1:00-1:35 — The method
+
+Show the architecture in `README.md`, followed by a quick view of
 `src/exactsource/context.py`, `src/exactsource/contracts.py` and
 `src/exactsource/plans.py`.
 
-Explain only the decisions visible in the code:
+Suggested narration:
 
-- formula-aware, target-first context with worksheet-qualified de-duplication and
-  child-aware clipping;
-- one fixed `Qwen/Qwen3.8-27B` model contract with route-specific schemas;
-- a strict typed plan rather than unvalidated prose;
-- declarative formula operations for focused work and a bounded transform for
-  broad sheet work;
-- atomic workbook promotion, failure isolation and one trace line per provider
-  attempt.
+> ExactSource builds target-first, formula-aware workbook context and asks the
+> model for a typed plan rather than free-form code. The plan is checked before it
+> is applied. Workbook promotion is atomic, so a rejected or failed attempt cannot
+> leave a half-written submission file. Repair is bounded, keeping the method
+> reproducible rather than looping until an answer happens to pass.
 
-### 0:50–1:35 — A real cell-level result
+## 1:35-2:00 — Trace and failure handling
 
-Use a development task whose output has already been independently evaluated.
-Show:
-
-1. the instruction and initial target cell;
-2. the produced formula in the Excel or LibreOffice formula bar;
-3. the corresponding trace reduced to non-secret audit fields;
-4. the unedited organiser evaluator result.
-
-For a compact trace view:
+Show only non-secret audit fields from one committed trace:
 
 ```sh
-jq '{task_id, model, provider_status, plan_status, input_tokens, output_tokens, latency_ms, tool}' \
-  /absolute/path/to/out/traces/TASK_ID.jsonl
+jq -s 'map({task_id, step, semantic_attempt, model, provider_status, plan_status, output_tokens, latency_ms})' \
+  traces/41691.jsonl
 ```
 
-State that this is a case-level integration result, not an aggregate benchmark
-score.
-
-### 1:35–2:05 — A real sheet-level result
-
-Repeat the same four views for a broad transformation. Focus on the final workbook
-and preservation of unrelated content. Mention that generated workbook code runs
-in the constrained child path and that a failed task receives a readable fallback
-workbook rather than breaking the batch.
-
-### 2:05–2:30 — Evaluation and efficiency
-
-Show `experiments/README.md` and
-`experiments/prompt_profile_dev_context_dedup_tokens_v1.json`.
-
-Use the measured statements exactly:
-
-- the frozen development profile contains 320 tasks and reads no golden workbook;
-- mean model-visible content fell from 21,751.69 to 15,537.98 characters;
-- p95 model-visible content fell from 49,056 to 35,957 characters;
-- context truncation fell from 6 tasks to 3;
-- the final pinned-renderer input is 5,735.11 tokens on average and 14,357 at p95.
-
-These are prompt-size measurements. Do not claim that they prove an accuracy or
-runtime improvement.
-
-### 2:30–2:50 — Reproducibility
-
-Run:
+Then show the aggregate execution fields:
 
 ```sh
-uv run --frozen pytest tests -q
+jq '{tasks, calls: .model.calls, attempts: .model.attempts,
+     semantic_repairs: .reliability.semantic_repairs,
+     transport_retries: .reliability.transport_retries}' run_metrics.json
+wc -l traces/*.jsonl | tail -1
+```
+
+Suggested narration:
+
+> The run produced 498 model-call trace records. Of 400 tasks, 369 completed the
+> model-and-apply path and 31 received safe fallback workbooks. A runtime success
+> is not treated as proof of correctness; only the unchanged organiser evaluator
+> determines that.
+
+## 2:00-2:40 — Verified 400-task result
+
+Run this against the committed evaluator output:
+
+```sh
+jq '.summary' results.json
+```
+
+Keep the full summary visible while saying:
+
+> All 400 tasks were graded, with zero missing outputs and zero evaluator errors.
+> The verified pass rate is 0.755 and cell accuracy is 0.8006. The cell-level pass
+> rate is 0.7818; the sheet-level pass rate is 0.696. The complete inference run
+> took 23,983.52 seconds on the host, and the organiser evaluation took 329.66
+> seconds. The lower sheet-level result is a real limitation, not a hidden or
+> rounded-away result.
+
+Briefly open `experiments/full_400_8b84dba.json` to show the pinned solver commit,
+dataset hash, evaluator commit, container identity, timings and sanitised run
+metadata. Do not scroll through mismatch details during the video.
+
+## 2:40-3:00 — Reproducibility and close
+
+Show `Dockerfile`, `run.sh`, `run_metrics.json`, `predictions.jsonl`, `outputs/`
+and `traces/`. If time permits, show the already-completed structural check rather
+than starting another model run:
+
+```sh
 uv run --frozen python tools/check_submission.py \
   --dataset-dir /absolute/path/to/dataset \
-  --submission-dir /absolute/path/to/out
+  --submission-dir "$PWD"
 ```
-
-Then show `Dockerfile`, `run.sh` and the schema-version-2 `run_metrics.json`.
-Explain that the image contains neither training code nor credentials, and that
-the metrics preserve unknown values rather than silently treating them as zero.
-
-### 2:50–3:00 — Result and limits
-
-Once the full official run exists, show the unedited `results.json` summary and
-state pass rate, cell accuracy, cell-level pass rate, sheet-level pass rate and
-wall time. Until then, say plainly that the full score is pending.
 
 Suggested closing line:
 
-> ExactSource does not claim that a workbook is correct because it opens. It leaves
-> a reproducible trail from request, through model attempt and validated plan, to
-> the workbook the organiser actually scores.
+> ExactSource does not claim a workbook is correct merely because it opens. The
+> public repository provides the code, container entry point, 400 predictions,
+> 400 output workbooks, 498 attempt traces and the unchanged evaluator result, so
+> the method and its limits can be checked end to end.
 
-## Final recording checklist
+## Recording checklist
 
-- Public repository URL is visible.
-- Team members are credited with confirmed GitHub handles.
-- No credential or private account detail appears in video, subtitles or terminal
-  scrollback.
-- Both model routes are demonstrated on real development examples.
-- Formula cells are shown in the formula bar.
-- The full-400 score is labelled either verified or pending, never inferred from
-  smoke tests.
-- The command used for the final run and the host-level elapsed time are visible.
-- Captions are readable at normal playback speed and the recording stays under the
-  organiser's stated duration, if one is later supplied.
+- The public repository URL is visible and the final video link is added to the
+  submission form and repository documentation after upload.
+- No credential, private account detail, raw request header or shell history is
+  visible in the video, subtitles or terminal scrollback.
+- Both the cell and sheet routes are shown with real development examples.
+- The formula bar is visible for formula cells.
+- The result is labelled as the verified public 400-task benchmark, not a private
+  held-out score.
+- The five score fields, 369 runtime successes, 31 safe fallbacks, 498 trace
+  records and both measured timings are stated exactly.
+- Runtime success and evaluator correctness are kept distinct.
+- The limitations are explicit: 31 tasks fell back safely, the sheet-level pass
+  rate is 0.696, no fine-tuning was used, and provider-reported input-token usage
+  is unavailable rather than zero-cost.

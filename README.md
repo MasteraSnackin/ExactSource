@@ -28,7 +28,10 @@ You need:
 - A Tinker API key in the shell as `TINKER_API_KEY`
 - Outbound HTTPS access
 
-The dataset is not bundled. ExactSource was developed against the organiser's
+The original benchmark archive and golden workbooks are not bundled. The final
+submission does include benchmark-derived output workbooks, traces and evaluator
+evidence under the terms recorded in [Provenance](PROVENANCE.md). ExactSource was
+developed against the organiser's
 [pinned research revision](https://github.com/ylookup/encode-hackathon/tree/37d9016264762a25cae49e077cd0893055bd9093/research).
 
 The Docker run does not require `uv` or LibreOffice on the host. The structural
@@ -58,10 +61,31 @@ directory for the final run.
 
 ## Current evidence
 
-ExactSource has not completed the official 400-task run, so this README does not
-report an aggregate score. The repository contains clearly labelled development
-controls and one-task integration results. [`SUBMISSION.md`](SUBMISSION.md)
-records the remaining evidence needed for the final submission.
+ExactSource completed one clean-start run of all 400 public tasks at solver
+commit `8b84dba1d9263e2123b8f15267239b70ff817907`. The unchanged organiser evaluator
+graded all 400 predictions with no missing items and no evaluator errors:
+
+| Official metric | Result |
+| --- | ---: |
+| Overall pass rate | `0.755` (75.5%) |
+| Cell accuracy | `0.8006` (80.06%) |
+| Cell-level pass rate | `0.7818` (78.18%) |
+| Sheet-level pass rate | `0.696` (69.6%) |
+
+The run started at `2026-09-06T00:10:23Z`, ended at
+`2026-09-06T06:50:07Z` and took `23,983.52` seconds by the host clock. It wrote
+400 predictions, 400 workbooks and 400 task trace files containing 498 trace
+records. ExactSource accepted 369 task outputs and emitted 31 readable initial-
+workbook fallbacks. A runtime success only establishes that the candidate passed
+ExactSource's structural checks; it does not establish benchmark correctness.
+
+The provider reported `5,592,930` output tokens. It reported zero input tokens,
+which ExactSource treats as unavailable rather than as evidence that no input
+tokens were used. The evaluator took `329.66` seconds with LibreOffice 26.8.0.3.
+[`SUBMISSION.md`](SUBMISSION.md) records the full provenance and final artefact
+layout. Non-secret aggregate evidence is recorded in
+[`experiments/acceptance_10_8b84dba.json`](experiments/acceptance_10_8b84dba.json)
+and [`experiments/full_400_8b84dba.json`](experiments/full_400_8b84dba.json).
 
 The optional training workspace contains 16 hand-written synthetic cases, split
 into 12 training examples and four tuning examples. Offline preparation used the
@@ -281,23 +305,41 @@ The submission demo shows a batch run rather than a graphical interface.
 [`docs/DEMO.md`](docs/DEMO.md) outlines a three-minute recording using real
 workbooks, formula-bar checks, traces and unedited evaluator results.
 
-The public video link, team list and full benchmark result are still pending in
-[`SUBMISSION.md`](SUBMISSION.md). Before submission:
+The full benchmark result and reproducibility evidence are recorded in
+[`SUBMISSION.md`](SUBMISSION.md). Before submission, the remaining human-owned
+steps are:
 
-- Run all 400 tasks and commit the unedited `results.json`
 - Add the confirmed team members and demo link
-- Record the exact run command and host-level elapsed time
-- Keep any fine-tuning claim separate unless a paid run and reproducible
-  checkpoint actually exist
+- Record the demo against the published artefacts and unedited evaluator result
 
 ## Known limits
 
 - ExactSource can produce a valid but logically wrong plan. Only held-out
   evaluation can establish spreadsheet correctness.
+- The completed public run produced 31 safe initial-workbook fallbacks. These
+  preserve one readable output per task, but they are not runtime-accepted model
+  solutions. One unchanged workbook nevertheless matched its evaluator target.
+- Runtime success is not correctness: 369 tasks passed ExactSource's structural
+  acceptance checks, while the official evaluator independently measured the
+  workbook results.
+- Temperature zero did not make repeated Tinker completions fully deterministic;
+  output variance was observed during development.
+- Tinker reported input-token counts as zero for the full run. ExactSource treats
+  those values as unavailable, so the reported token total covers output only.
+- No fine-tuning was performed. The submitted solver uses the unmodified
+  `Qwen/Qwen3.8-27B` base model with prompting, typed plans and deterministic
+  execution checks.
 - The inference image does not recalculate formulas. The organiser's evaluator
   performs that step with LibreOffice.
-- `openpyxl` may remove OOXML extensions it does not support, including some
-  extended data-validation metadata.
+- `openpyxl` warns that it may remove unsupported OOXML data-validation
+  extensions. A workbook can therefore reopen successfully while losing that
+  unsupported metadata.
+- Seven evaluated output workbooks retain external-link metadata inherited from
+  the supplied public initial workbooks. ExactSource introduced none of those
+  targets, but some are HTTPS links that a spreadsheet client could contact if
+  external updates are enabled. Keep external-link updates disabled when
+  inspecting untrusted benchmark files; [Provenance](PROVENANCE.md) records the
+  publication boundary.
 - Built-in operations are confined to declared answer ranges. The runner screens
   Python transforms and applies resource limits, but it does not yet compare
   every cell and OOXML part before and after execution.
@@ -324,6 +366,8 @@ The public video link, team list and full benchmark result are still pending in
   boundaries and trade-offs
 - [Evaluation protocol](docs/EVALUATION.md): scoring, held-out checks and
   experiment discipline
+- [Final-run analysis](docs/FINAL_RUN_ANALYSIS.md): generation funnel,
+  correctness, failure causes, latency and token efficiency
 - [Tinker Cookbook path](docs/TINKER_COOKBOOK.md): optional training and its
   paid-run checks
 - [Organiser clarifications](docs/ORGANISER_CLARIFICATIONS.md): dated rules and
@@ -339,5 +383,8 @@ Open a [GitHub issue](https://github.com/MasteraSnackin/ExactSource/issues) with
 the task ID, exact command and a redacted error or trace excerpt. Do not attach
 API keys, private workbook data or golden workbooks.
 
-ExactSource code is released under the [MIT licence](LICENSE). SpreadsheetBench
-is a separate CC BY-SA 4.0 dataset and is not bundled with this repository.
+ExactSource source code is released under the [MIT licence](LICENSE).
+Benchmark-derived output workbooks, trace context and evaluator evidence are
+published under the SpreadsheetBench CC BY-SA 4.0 terms described in
+[Provenance](PROVENANCE.md). The original archive and golden workbooks are not
+bundled.

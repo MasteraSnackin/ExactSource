@@ -100,3 +100,17 @@ removed, renamed or unreadable. A source scan should also fail if runtime code
 contains a golden-file glob or opens a path derived from a golden field.
 Evaluator output may be used to measure a completed experiment; individual
 golden mismatches must not be supplied to the solver as repair feedback.
+
+## Completed final run
+
+The final base-model run used all 400 public tasks and the unchanged organiser
+evaluator. It achieved a `0.755` exact pass rate and `0.8006` cell accuracy, with
+all tasks graded and no missing outputs or evaluator errors. The unedited result
+is retained at [`results.json`](../results.json), and the safe aggregate record is
+[`experiments/full_400_8b84dba.json`](../experiments/full_400_8b84dba.json).
+
+[`FINAL_RUN_ANALYSIS.md`](FINAL_RUN_ANALYSIS.md) reports the post-run generation
+funnel, recovery effectiveness, runtime-versus-evaluator outcomes, task-size
+skew, latency and output-token distributions. That analysis was performed only
+after the inference artefacts were frozen and was not supplied to the model or
+used to repair any submitted workbook.

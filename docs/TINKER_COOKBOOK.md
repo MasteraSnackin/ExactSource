@@ -21,8 +21,10 @@ ExactSource has been fine-tuned.
   formula-bearing cases with LibreOffice against independent value oracles,
   rendered them with the pinned Qwen tokenizer, and emitted deterministic JSONL
   plus a hash-bearing manifest.
-- No Tinker training run, checkpoint or aggregate 400-task model run has been
-  performed yet.
+- No Tinker training run or checkpoint was used. The unmodified base model has
+  completed the final 400-task inference run; its verified score and provenance
+  are recorded in [`SUBMISSION.md`](../SUBMISSION.md) and
+  [`experiments/full_400_8b84dba.json`](../experiments/full_400_8b84dba.json).
 
 ## Why the cookbook is useful
 
@@ -54,9 +56,9 @@ preserves the small, fast and auditable Docker runtime.
 
 Headless LibreOffice is used during offline preparation to recalculate only the
 temporary synthetic formula workbooks and prove that formula labels have the
-intended values. It is not used by SFT itself. The organiser's evaluator also
-needs LibreOffice later to recalculate benchmark outputs when a trained
-checkpoint is compared with the base model.
+intended values. It is not used by SFT itself. The organiser's evaluator used
+LibreOffice 26.8.0.3 to recalculate the completed base-model benchmark outputs;
+the same evaluator path would be required for any future checkpoint comparison.
 
 ## Submission constraints to preserve
 
